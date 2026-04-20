@@ -11,5 +11,5 @@ spec:
     kubernetes:
       envoyService:
         type: LoadBalancer
-        annotations:
-          yandex.cloud/load-balancer-external-ip-list: {{ .Values.lbIp | quote }}
+        # YC CCM читает spec.loadBalancerIP сервиса, а не YC-специфичные аннотации.
+        loadBalancerIP: {{ .Values.lbIp | quote }}
