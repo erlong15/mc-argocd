@@ -2,7 +2,7 @@
 # Прокидывается из ApplicationSet (terraform/charts/argocd-bootstrap/templates/appset-infra.yaml).
 lbIp: ""
 
-envoyGateway:
+gateway-helm:
   config:
     envoyGateway:
       logging:
