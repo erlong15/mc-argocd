@@ -1,0 +1,5 @@
+# Все значения переопределяются helm_release из terraform/argocd.tf
+repoUrl: ""
+targetRevision: main
+infraPath: infra
+lbIp: ""

@@ -1,0 +1,7 @@
+letsencryptEmail: admin@erlong.ru
+
+cert-manager:
+  crds:
+    enabled: true
+  extraArgs:
+    - --enable-gateway-api

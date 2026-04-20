@@ -1,0 +1,91 @@
+global:
+  domain: argocd.erlong.ru
+
+configs:
+  params:
+    # Envoy Gateway terminates TLS and forwards plain HTTP to argocd-server.
+    server.insecure: true
+
+server:
+  service:
+    type: ClusterIP
+
+  # Встроенный шаблон чарта argo-cd: templates/argocd-server/httproute.yaml.
+  # Гейт сидит в ns infra — attach'имся к нему, listener https (443).
+  httproute:
+    enabled: true
+    parentRefs:
+      - group: gateway.networking.k8s.io
+        kind: Gateway
+        name: public
+        namespace: infra
+        sectionName: https
+    hostnames:
+      - argocd.erlong.ru
+
+  # TLS живёт рядом с Gateway (см. repo/infra/envoy-gateway/templates/certificate.yaml).
+  # Cert в ns infra ссылается listener'ом того же ns — no cross-ns, no ReferenceGrant.
+  # HTTPRoute здесь остаётся: он в ns argocd и attach'ится к Gateway через parentRefs,
+  # TLS-термирование — забота Gateway.
+  certificate:
+    enabled: false
+
+applicationSet:
+  enabled: true
+
+notifications:
+  enabled: false
+
+dex:
+  enabled: false
+
+# helm-secrets + sops + age устанавливаются в argocd-repo-server как custom tools.
+# Приватный age-ключ монтируется из Secret `helm-secrets-private-keys` (см. argocd.tf).
+repoServer:
+  env:
+    - name: HELM_PLUGINS
+      value: /custom-tools/helm-plugins/
+    - name: HELM_SECRETS_CURL_CONTAINER
+      value: "true"
+    - name: SOPS_AGE_KEY_FILE
+      value: /helm-secrets-private-keys/key.txt
+    - name: PATH
+      value: /custom-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  volumes:
+    - name: custom-tools
+      emptyDir: {}
+    - name: helm-secrets-private-keys
+      secret:
+        secretName: helm-secrets-private-keys
+        optional: true
+  volumeMounts:
+    - name: custom-tools
+      mountPath: /custom-tools
+    - name: helm-secrets-private-keys
+      mountPath: /helm-secrets-private-keys
+  initContainers:
+    - name: download-tools
+      image: alpine:3.19
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -eux
+          apk add --no-cache curl tar bash git
+
+          # sops
+          curl -sSL -o /custom-tools/sops \
+            https://github.com/getsops/sops/releases/download/v3.9.1/sops-v3.9.1.linux.amd64
+          chmod +x /custom-tools/sops
+
+          # age
+          curl -sSL https://github.com/FiloSottile/age/releases/download/v1.2.0/age-v1.2.0-linux-amd64.tar.gz \
+            | tar -xz -C /custom-tools --strip-components=1 age/age age/age-keygen
+
+          # helm-secrets plugin
+          mkdir -p /custom-tools/helm-plugins/helm-secrets
+          curl -sSL https://github.com/jkroepke/helm-secrets/releases/download/v4.6.2/helm-secrets.tar.gz \
+            | tar -xz -C /custom-tools/helm-plugins/helm-secrets
+      volumeMounts:
+        - name: custom-tools
+          mountPath: /custom-tools

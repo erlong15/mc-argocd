@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: infra
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: {{ .Values.repoUrl | quote }}
+        revision: {{ .Values.targetRevision | quote }}
+        directories:
+          - path: {{ printf "%s/*" .Values.infraPath | quote }}
+  template:
+    metadata:
+      name: '{{`{{ .path.basename }}`}}'
+    spec:
+      project: infra
+      source:
+        repoURL: {{ .Values.repoUrl | quote }}
+        targetRevision: {{ .Values.targetRevision | quote }}
+        path: '{{`{{ .path.path }}`}}'
+        # lbIp известен только terraform'у, поэтому envoy-gateway получает его inline
+        # из ApplicationSet. Остальные пути (cert-manager, argocd-route) рендерятся как есть.
+        {{`{{- if eq .path.basename "envoy-gateway" }}`}}
+        helm:
+          releaseName: envoy-gateway
+          valuesObject:
+            lbIp: {{ .Values.lbIp | quote }}
+        {{`{{- end }}`}}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: infra
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

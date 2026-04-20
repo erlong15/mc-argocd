@@ -1,0 +1,15 @@
+{{- if not .Values.lbIp }}
+{{- fail "lbIp is required: pass the static IP reserved by terraform (output: ingress_ip)" }}
+{{- end }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: yc-lb
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: LoadBalancer
+        annotations:
+          yandex.cloud/load-balancer-external-ip-list: {{ .Values.lbIp | quote }}

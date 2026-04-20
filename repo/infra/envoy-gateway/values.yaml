@@ -1,0 +1,10 @@
+# Статический внешний IP, выданный Terraform'ом в Yandex Cloud.
+# Прокидывается из ApplicationSet (terraform/charts/argocd-bootstrap/templates/appset-infra.yaml).
+lbIp: ""
+
+envoyGateway:
+  config:
+    envoyGateway:
+      logging:
+        level:
+          default: info

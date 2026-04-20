@@ -1,0 +1,5 @@
+apiVersion: v2
+name: argocd-bootstrap
+description: AppProject "infra" and Applications that bring up Envoy Gateway, cert-manager, and the HTTPRoute exposing argocd
+type: application
+version: 0.1.0

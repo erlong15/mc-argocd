@@ -1,0 +1,40 @@
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 1
+
+image:
+  repository: nginx
+  tag: "1.25.5"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+containerPort: 80
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: nginx.local
+  path: /
+  pathType: Prefix
+
+config:
+  indexHtml: |
+    <html>
+      <body>
+        <h1>nginx-demo</h1>
+        <p>Default values</p>
+      </body>
+    </html>

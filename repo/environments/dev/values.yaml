@@ -1,0 +1,22 @@
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+ingress:
+  enabled: false
+  host: nginx-dev.local
+
+config:
+  indexHtml: |
+    <html>
+      <body>
+        <h1>nginx-demo / dev</h1>
+        <p>Rendered by ArgoCD ApplicationSet</p>
+      </body>
+    </html>

@@ -1,0 +1,18 @@
+.DS_Store
+*.bak
+*.swp
+*.tmp
+
+# age / sops приватные ключи — никогда в Git
+*keys.txt
+*.agekey
+*.age.txt
+.sops/keys.txt
+.sops/*.txt
+
+# незашифрованные секреты в secrets/ — только *.enc.yaml
+secrets/*.yaml
+secrets/*.yml
+!secrets/.sops.yaml
+!secrets/*.enc.yaml
+!secrets/*.enc.yml

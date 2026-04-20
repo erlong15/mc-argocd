@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: workshop
+  namespace: argocd
+spec:
+  description: Workshop project for ArgoCD masterclass
+  sourceRepos:
+    - https://github.com/example/argocd-masterclass-demo.git
+  destinations:
+    - namespace: demo-dev
+      server: https://kubernetes.default.svc
+    - namespace: demo-prod
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: Secret
+    - group: apps
+      kind: Deployment
+    - group: networking.k8s.io
+      kind: Ingress
+  orphanedResources:
+    warn: true

@@ -1,0 +1,28 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: public
+spec:
+  gatewayClassName: yc
+  listeners:
+    # HTTP listener обслуживает ACME HTTP-01 challenge от cert-manager.
+    - name: http
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: argocd.erlong.ru
+      tls:
+        mode: Terminate
+        # Secret создаётся Certificate в том же ns infra (templates/certificate.yaml).
+        certificateRefs:
+          - kind: Secret
+            group: ""
+            name: argocd-tls
+      allowedRoutes:
+        namespaces:
+          from: All

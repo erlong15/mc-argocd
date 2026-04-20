@@ -1,0 +1,57 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: nginx-appset
+  namespace: argocd
+spec:
+  # Файл конфигурации удалён — Application сохраняется (для демо по drift/rollback)
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  generators:
+    - git:
+        repoURL: https://github.com/example/argocd-masterclass-demo.git
+        revision: main
+        files:
+          - path: environments/*/config.json
+  template:
+    metadata:
+      name: 'nginx-{{env}}'
+    spec:
+      project: workshop
+      source:
+        repoURL: https://github.com/example/argocd-masterclass-demo.git
+        targetRevision: main
+        path: charts/nginx-demo
+        helm:
+          releaseName: 'nginx-{{env}}'
+          values: |
+            fullnameOverride: nginx-{{ env }}
+            replicaCount: {{ replicaCount }}
+            resources:
+              requests:
+                cpu: {{ cpuRequest }}
+                memory: {{ memoryRequest }}
+              limits:
+                cpu: {{ cpuLimit }}
+                memory: {{ memoryLimit }}
+            ingress:
+              enabled: false
+            config:
+              indexHtml: |
+                <html>
+                  <body>
+                    <h1>nginx-demo / {{ env }}</h1>
+                    <p>{{ message }}</p>
+                  </body>
+                </html>
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ namespace }}'
+      # Для демо начинаем без automated sync — включаем вручную на шаге drift detection.
+      # Раскомментировать, чтобы включить auto-sync + self-heal:
+      # syncPolicy:
+      #   automated:
+      #     prune: true
+      #     selfHeal: true
+      #   syncOptions:
+      #     - CreateNamespace=true
