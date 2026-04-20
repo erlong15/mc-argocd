@@ -59,7 +59,7 @@ variable "node_autoscale_initial" {
 variable "argocd_chart_version" {
   type        = string
   description = "Version of argo-cd Helm chart"
-  default     = "7.6.12"
+  default     = "9.5.2"
 }
 
 variable "argocd_admin_password_bcrypt" {
