@@ -21,14 +21,12 @@ spec:
         repoURL: {{ .Values.repoUrl | quote }}
         targetRevision: {{ .Values.targetRevision | quote }}
         path: '{{`{{ .path.path }}`}}'
-        # lbIp известен только terraform'у, поэтому envoy-gateway получает его inline
-        # из ApplicationSet. Остальные пути (cert-manager, argocd-route) рендерятся как есть.
-        {{`{{- if eq .path.basename "envoy-gateway" }}`}}
+        # Глобальные values: каждый подчарт берёт только нужные ему ключи.
+        # lbIp известен только terraform'у, поэтому ApplicationSet генерируется здесь.
         helm:
-          releaseName: envoy-gateway
+          releaseName: '{{`{{ .path.basename }}`}}'
           valuesObject:
             lbIp: {{ .Values.lbIp | quote }}
-        {{`{{- end }}`}}
       destination:
         server: https://kubernetes.default.svc
         namespace: infra

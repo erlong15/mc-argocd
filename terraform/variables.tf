@@ -83,8 +83,8 @@ variable "domain" {
 
 variable "gitops_repo_url" {
   type        = string
-  description = "Git repository URL that ArgoCD pulls from. Must contain the contents of `repo/` from this masterclass (see demo-plan.md step 3). Empty string disables the infra bootstrap chart — useful for first-time apply when the remote isn't pushed yet."
-  default     = ""
+  description = "Git repository URL that ArgoCD pulls from. Defaults to this masterclass repo; override to point at your own fork."
+  default     = "https://github.com/erlong15/mc-argocd.git"
 }
 
 variable "age_key_file" {

@@ -5,3 +5,8 @@ cert-manager:
     enabled: true
   extraArgs:
     - --enable-gateway-api
+  # По умолчанию cert-manager держит leader election Role/RoleBinding в kube-system.
+  # AppProject infra ограничен ns infra — переводим leader election сюда же.
+  global:
+    leaderElection:
+      namespace: infra

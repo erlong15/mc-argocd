@@ -18,7 +18,7 @@ spec:
       hostname: argocd.erlong.ru
       tls:
         mode: Terminate
-        # Secret создаётся Certificate в том же ns infra (templates/certificate.yaml).
+        # Secret argocd-tls создаёт cert-manager (см. repo/infra/cert-manager) в этом же ns.
         certificateRefs:
           - kind: Secret
             group: ""
