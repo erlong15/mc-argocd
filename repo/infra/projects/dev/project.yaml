@@ -3,6 +3,11 @@ kind: AppProject
 metadata:
   name: demo-dev
   namespace: argocd
+  annotations:
+    # Применяется раньше ApplicationSet apps-dev (wave 0): иначе ApplicationSet
+    # controller стартует реконцайл до того, как AppProject попал в его кэш,
+    # и ругается «AppProject demo-dev not found».
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   description: Demo applications - dev environment
   sourceRepos:
