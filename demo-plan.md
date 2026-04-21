@@ -1,18 +1,19 @@
 # План демонстрации ArgoCD
 
-Кластер: Yandex Managed Kubernetes, поднятый через `terraform/`. ArgoCD устанавливается тем же `terraform apply` (Helm chart).
+Кластер: Yandex Managed Kubernetes, поднятый через `terraform/`. Тем же `terraform apply` в кластер заезжает ArgoCD + bootstrap-чарт, который создаёт AppProject `infra` и ApplicationSet'ом раскатывает инфраструктуру (Envoy Gateway + cert-manager). ArgoCD выставлен наружу через HTTPRoute + Let's Encrypt, UI доступен по `https://argocd.erlong.ru` (или тому, что указано в `var.domain`).
 
 ## Цель демо
 
 Показать минимальный GitOps-цикл:
-- кластер + ArgoCD из Terraform
-- подключение репозитория
+- кластер + ArgoCD + инфраструктурный слой одним `terraform apply`
+- self-bootstrap: ArgoCD сам ставит Envoy Gateway и cert-manager через ApplicationSet
 - деплой Helm-приложения в dev/prod через ApplicationSet
 - manual sync → переключение на automated + self-heal
 - drift detection / self-heal / rollback через `git revert`
+- AppProject как граница безопасности
 - pipeline шифрования секретов (SOPS)
 
-**Общее время:** ~45–55 мин (из них 10–15 мин ждём `terraform apply`).
+**Общее время:** ~50–60 мин (из них 15–20 мин ждём `terraform apply` + первый sync инфраструктуры + выпуск LE-сертификата).
 
 ---
 
@@ -31,9 +32,9 @@ git --version
 ```
 
 Проверить:
-- доступ в интернет до `github.com` и `argoproj.github.io`
-- создан пустой Git remote под демо-репо (GitHub/GitLab)
-- в `~/.ssh` есть ключ, пробрасываемый на remote (или HTTPS + токен)
+- доступ в интернет до `github.com`, `argoproj.github.io`, `docker.io/envoyproxy`, `acme-v02.api.letsencrypt.org`
+- есть форк `https://github.com/erlong15/mc-argocd` на ваш аккаунт — именно его ArgoCD будет пуллить через `gitops_repo_url`
+- домен `var.domain` (дефолт `argocd.erlong.ru`) находится в Cloud DNS зоне `var.dns_zone_name` (дефолт `erlong-ru`). Terraform создаст A-запись сам, но зона должна существовать и обслуживаться в YC DNS
 
 Brew-установка недостающего:
 
@@ -43,13 +44,16 @@ brew install argocd sops age
 
 ---
 
-## 1. Поднять кластер + ArgoCD (5 мин на ввод, 10–15 мин ждать)
+## 1. Поднять кластер + ArgoCD + инфраструктуру (5 мин на ввод, 15–20 мин ждать)
 
 ```bash
 cd terraform
 cat > terraform.tfvars <<EOF
-cloud_id  = "<ваш cloud_id>"
-folder_id = "<ваш folder_id>"
+cloud_id        = "<ваш cloud_id>"
+folder_id       = "<ваш folder_id>"
+gitops_repo_url = "https://github.com/<you>/mc-argocd.git"
+# опционально — если хотите, чтобы ArgoCD сразу умел расшифровывать SOPS (см. секцию 12):
+# age_key_file  = "/Users/<you>/.config/sops/age/keys.txt"
 EOF
 
 terraform init
@@ -58,6 +62,14 @@ terraform apply
 
 Пока идёт apply — показываем слайды 1–7.
 
+Что делает этот `apply`:
+- VPC / subnet / managed K8s кластер + node group
+- резервирует статический IP для входящего трафика
+- создаёт A-запись `${var.domain}` → этот IP
+- ставит ArgoCD (чарт `argo-cd` 9.5.2, `server.service.type: ClusterIP`, `server.httproute.enabled: true` с parentRef на Gateway `public` в ns `infra`)
+- ставит bootstrap-чарт (`terraform/charts/argocd-bootstrap`): AppProject `infra` + ApplicationSet, генерирующий по одному Application на каждую поддиректорию `repo/infra/*`
+- ApplicationSet затем поднимает внутри кластера Envoy Gateway (pinned к зарезервированному IP через `EnvoyProxy.spec.provider.kubernetes.envoyService.loadBalancerIP`) и cert-manager (c HTTP-01 через Gateway API)
+
 После apply:
 
 ```bash
@@ -65,83 +77,91 @@ eval "$(terraform output -raw kubeconfig_command)"
 kubectl config current-context
 kubectl get nodes
 kubectl get pods -n argocd
+kubectl get pods -n infra
+kubectl -n argocd get applicationset,app
 ```
 
-**Что должен увидеть зритель:** 2 Ready-ноды, ~7 Running-подов в `argocd`.
+**Что должен увидеть зритель:** 1–2 Ready-ноды, ArgoCD-поды Running, в ns `infra` поднимаются envoy-gateway + cert-manager, в ArgoCD два Application'а `envoy-gateway` и `cert-manager` движутся в `Synced/Healthy`.
 
 ---
 
 ## 2. Открыть UI и получить пароль (2 мин)
 
 ```bash
-terraform output argocd_url               # http://<LB_IP>
+terraform output argocd_url        # https://argocd.erlong.ru
+terraform output ingress_ip        # зарезервированный IP, на него смотрит DNS A
 terraform output argocd_initial_admin_password_command
 # выполнить то, что в output:
 kubectl -n argocd get secret argocd-initial-admin-secret \
   -o jsonpath='{.data.password}' | base64 -d && echo
 ```
 
-Логин в UI (`admin` / выданный пароль) и CLI:
+Сценарий A — инфраструктура уже поднялась, сертификат выписан:
 
 ```bash
-argocd login "$(kubectl -n argocd get svc argocd-server -o jsonpath='{.status.loadBalancer.ingress[0].ip}')" \
-  --username admin --password '<PASTE_PASSWORD>' --insecure
+# проверка, что LE-cert уже есть и Gateway зелёный:
+kubectl -n infra get certificate argocd -o jsonpath='{.status.conditions[-1]}{"\n"}'
+kubectl -n infra get gateway public -o jsonpath='{.status.listeners[*].name}{"\n"}'
+curl -sI https://argocd.erlong.ru/ | head -1
+```
+
+Открыть `https://argocd.erlong.ru` в браузере → логин `admin` / выданный пароль.
+
+```bash
+argocd login argocd.erlong.ru --username admin --password '<PASTE_PASSWORD>' --grpc-web
 argocd account get-user-info
 ```
 
-⚠️ `--insecure` — потому что чарт поставлен с `server.insecure=true` и self-signed TLS. В проде ставим normal TLS / Ingress с валидным сертификатом.
+Сценарий B — HTTPS ещё не готов (первый apply, cert-manager в процессе HTTP-01 challenge):
 
-**Что должен увидеть зритель:** пустой список Applications в UI.
+```bash
+# пока нет TLS — достучаться до argocd-server через port-forward
+kubectl -n argocd port-forward svc/argocd-server 8080:80 &
+open http://localhost:8080
+argocd login localhost:8080 --username admin --password '<PASTE_PASSWORD>' --plaintext
+```
+
+Статус выдачи сертификата:
+
+```bash
+kubectl -n infra get certificate,certificaterequest,order,challenge
+kubectl -n infra describe challenge | tail -30
+```
+
+**Что должен увидеть зритель:** пустой список Applications (кроме `envoy-gateway` и `cert-manager`) в UI. Здесь уместно проговорить, что инфраструктурный слой ArgoCD уже управляет сам собой — далее добавляем прикладной слой.
 
 ---
 
-## 3. Подготовить Git-репозиторий (3 мин)
+## 3. Workshop AppProject (1 мин)
 
-Содержимое `repo/` мастеркласса должно жить в **отдельном** Git-репозитории (ArgoCD подключается к нему извне). Копируем наружу, чтобы не конфликтовать с родительским репо:
+Bootstrap-чарт создал только `infra` project. Для демо-приложений используем отдельный `workshop`:
 
-```bash
-cp -r ../repo /tmp/argocd-masterclass-demo
-cd /tmp/argocd-masterclass-demo
-```
-
-Подменить плейсхолдер на ваш remote URL:
+Сначала подменить `sourceRepos` в `repo/bootstrap/project.yaml` на ваш форк (если форкали под другим именем). Дефолт — `https://github.com/example/argocd-masterclass-demo.git`, надо поправить на `https://github.com/<you>/mc-argocd.git`:
 
 ```bash
-export REMOTE='git@github.com:<you>/argocd-masterclass-demo.git'
-sed -i.bak "s|https://github.com/example/argocd-masterclass-demo.git|${REMOTE}|g" \
+cd ../repo
+sed -i.bak "s|https://github.com/example/argocd-masterclass-demo.git|https://github.com/<you>/mc-argocd.git|g" \
   bootstrap/project.yaml apps/appset-nginx.yaml
 find . -name '*.bak' -delete
-```
+git add bootstrap/project.yaml apps/appset-nginx.yaml
+git commit -m "point workshop project at my fork"
+git push
 
-Инициализация и push:
-
-```bash
-git init && git branch -M main
-git add .
-git commit -m "initial argocd demo"
-git remote add origin "$REMOTE"
-git push -u origin main
-```
-
----
-
-## 4. Создать AppProject (1 мин)
-
-```bash
 kubectl apply -f bootstrap/project.yaml
-kubectl get appprojects -n argocd workshop
+kubectl get appprojects -n argocd
 ```
 
-Пояснить:
+Пояснить на примере:
 - ограничили `sourceRepos` → только наш remote
 - ограничили `destinations` → только namespaces `demo-dev`, `demo-prod`
-- ограничили kinds в whitelist (безопасная рамка multi-tenancy)
+- whitelists kinds → безопасная рамка multi-tenancy
+- есть и второй AppProject `infra`, созданный terraform'ом (`kubectl get appproject infra -n argocd -o yaml`) — с более строгим списком ns (только `infra`)
 
 Namespaces `demo-dev` / `demo-prod` уже созданы terraform'ом (см. `terraform/argocd.tf`).
 
 ---
 
-## 5. Развернуть ApplicationSet без auto-sync (3 мин)
+## 4. Развернуть ApplicationSet без auto-sync (3 мин)
 
 ApplicationSet в `apps/appset-nginx.yaml` умышленно без `automated` — сначала показываем manual sync.
 
@@ -156,7 +176,7 @@ argocd app list
 
 ---
 
-## 6. Manual sync (2 мин)
+## 5. Manual sync (2 мин)
 
 ```bash
 argocd app sync nginx-dev
@@ -166,7 +186,7 @@ kubectl get deploy,svc,cm -n demo-dev
 kubectl get deploy,svc,cm -n demo-prod
 ```
 
-Показать в UI дерево ресурсов (это главный визуальный аргумент ArgoCD).
+Показать в UI дерево ресурсов (главный визуальный аргумент ArgoCD).
 
 Пояснить различия prod vs dev:
 - разные `replicaCount` (1 vs 2)
@@ -175,7 +195,7 @@ kubectl get deploy,svc,cm -n demo-prod
 
 ---
 
-## 7. Включить auto-sync + self-heal (2 мин)
+## 6. Включить auto-sync + self-heal (2 мин)
 
 В `apps/appset-nginx.yaml` раскомментировать блок `syncPolicy.automated`:
 
@@ -196,9 +216,9 @@ kubectl apply -f apps/appset-nginx.yaml
 
 ---
 
-## 8. Изменение через Git (3 мин)
+## 7. Изменение через Git (3 мин)
 
-Поменять в `environments/dev/config.json` `replicaCount` с 1 на 2 — откройте в редакторе или:
+Поменять в `environments/dev/config.json` `replicaCount` с 1 на 2:
 
 ```bash
 jq '.replicaCount = 2' environments/dev/config.json > .tmp && mv .tmp environments/dev/config.json
@@ -218,7 +238,7 @@ kubectl get deploy -n demo-dev
 
 ---
 
-## 9. Drift detection + self-heal (2 мин)
+## 8. Drift detection + self-heal (2 мин)
 
 Ручное вмешательство в кластер:
 
@@ -233,7 +253,7 @@ kubectl get deploy nginx-dev -n demo-dev -w
 
 ---
 
-## 10. Rollback через git revert (2 мин)
+## 9. Rollback через git revert (2 мин)
 
 ```bash
 git log --oneline -n 5
@@ -247,7 +267,7 @@ kubectl get deploy nginx-dev -n demo-dev -o jsonpath='{.spec.replicas}' && echo
 
 ---
 
-## 11. AppProject как граница безопасности (2 мин)
+## 10. AppProject как граница безопасности (2 мин)
 
 Попробуем задеплоить ресурс за пределы разрешённых namespace'ов:
 
@@ -261,8 +281,8 @@ metadata:
 spec:
   project: workshop
   source:
-    repoURL: ${REMOTE}
-    path: charts/nginx-demo
+    repoURL: https://github.com/<you>/mc-argocd.git
+    path: repo/charts/nginx-demo
     targetRevision: main
   destination:
     server: https://kubernetes.default.svc
@@ -278,11 +298,13 @@ argocd app get break-project
 kubectl delete application break-project -n argocd
 ```
 
+Заодно можно показать ту же защиту и на `infra`-project: попытаться создать Application с `project: infra`, целящий в `kube-system` — получит отказ. cert-manager в прошлом релизе сам нарывался на эту границу, когда пытался складывать leader-election RBAC в `kube-system`; поэтому в `repo/infra/cert-manager/values.yaml` явно выставлено `cert-manager.global.leaderElection.namespace: infra`.
+
 ---
 
-## 12. SOPS pipeline (5 мин)
+## 11. SOPS pipeline (5 мин)
 
-Сгенерировать age-ключ:
+Сгенерировать age-ключ (если ещё не делали перед `terraform apply`):
 
 ```bash
 mkdir -p ~/.config/sops/age
@@ -292,12 +314,20 @@ PUBKEY=$(grep '# public key:' ~/.config/sops/age/keys.txt | awk '{print $4}')
 echo "public: $PUBKEY"
 ```
 
-Вставить `$PUBKEY` в `secrets/.sops.yaml` (поле `age`).
+Вставить `$PUBKEY` в `repo/secrets/.sops.yaml` (поле `age`).
+
+Если в `terraform.tfvars` был задан `age_key_file` — приватный ключ уже положен в Secret `helm-secrets-private-keys` в ns argocd и смонтирован в `argocd-repo-server` (см. `terraform/argocd-values.yaml:44-92`). Если нет — создать Secret руками:
+
+```bash
+kubectl -n argocd create secret generic helm-secrets-private-keys \
+  --from-file=key.txt=$HOME/.config/sops/age/keys.txt
+kubectl -n argocd rollout restart deploy argocd-repo-server
+```
 
 Создать plaintext Secret из шаблона и зашифровать:
 
 ```bash
-cd secrets
+cd repo/secrets
 cp dev-secret.example.yaml dev-secret.yaml
 # отредактировать значения в dev-secret.yaml
 sops -e dev-secret.yaml > dev-secret.enc.yaml
@@ -307,7 +337,7 @@ sops -d dev-secret.enc.yaml   # проверка расшифровки
 git add .sops.yaml dev-secret.enc.yaml
 git commit -m "add encrypted dev secret"
 git push
-cd ..
+cd ../..
 ```
 
 `repo/.gitignore` блокирует коммит любых `secrets/*.yaml`, кроме `*.enc.yaml` и `.sops.yaml`.
@@ -315,42 +345,51 @@ cd ..
 Проговорить:
 - в Git хранится только ciphertext
 - приватный ключ живёт в `~/.config/sops/age/keys.txt` и **не уходит** в Git
-- чтобы ArgoCD сам расшифровывал — нужен plugin (CMP / helm-secrets / KSOPS) или ESO / Vault. В этом демо такой plugin не настроен.
+- argocd-repo-server умеет расшифровывать через plugin helm-secrets (в чарте в `repoServer.initContainers` скачиваются `sops`, `age`, helm-secrets, `SOPS_AGE_KEY_FILE` указывает на смонтированный Secret)
+- альтернативы: External Secrets Operator, Vault, KSOPS
 
 ---
 
-## 13. Что проговорить отдельно
+## 12. Что проговорить отдельно
 
-- зачем AppProject в multi-tenant
+- зачем AppProject в multi-tenant (граница, а не просто метка)
 - зачем ApplicationSet вместо десятков Application
+- self-bootstrap паттерн: ArgoCD ставит сам себе Gateway + cert-manager
+- почему `lbIp` пробрасывается из terraform через `valuesObject` ApplicationSet'а, а не через git (IP живёт в yandex_vpc_address и не в GitOps-контуре)
 - auto-sync удобен, но требует дисциплины (sync windows, ignoreDifferences)
 - SOPS ≠ готовое решение для секретов в проде
 
 ---
 
-## 14. Troubleshooting (если что-то сломалось)
+## 13. Troubleshooting (если что-то сломалось)
 
 | Симптом | Причина | Что делать |
 |---|---|---|
 | `argocd-initial-admin-secret not found` | password-secret удаляется после первой смены пароля | `argocd account update-password`; если потерян — `kubectl -n argocd delete pod -l app.kubernetes.io/name=argocd-server` и заново из initial-admin-secret (только если он ещё не удалён) |
-| ApplicationSet не генерирует apps | неверный `files:` path или HTTPS auth | `kubectl describe applicationset nginx-appset -n argocd` |
-| Application `ComparisonError` | AppProject блокирует kind/namespace | `kubectl get appproject workshop -n argocd -o yaml`, сверить whitelist |
-| `sops` не видит `.sops.yaml` | правила ищутся вверх по дереву | запускать `sops` из `secrets/` или поднять `.sops.yaml` в корень `repo/` |
+| HTTPS не открывается / `ERR_CERT_AUTHORITY_INVALID` | cert-manager ещё не выписал сертификат | `kubectl -n infra get certificate,order,challenge`; если challenge `invalid` — `kubectl -n infra delete certificate argocd` и дождаться повторного выпуска |
+| LB получил не зарезервированный IP | YC CCM читает `spec.loadBalancerIP`, а не YC-аннотацию | проверить `kubectl -n infra get svc -l gateway.envoyproxy.io/owning-gateway-name=public -o yaml`, там должно быть `spec.loadBalancerIP`; если нет — обновить `repo/infra/envoy-gateway/templates/envoyproxy.yaml` и засинкать |
+| envoy-gateway app падает с `Certificate CRD not found` | ApplicationSet'ы ставятся параллельно, envoy-gateway sync'ится раньше, чем cert-manager поставил CRD | Certificate живёт в `repo/infra/cert-manager/templates/argocd-certificate.yaml`, не в envoy-gateway — CRD и CR в одном Application, Argo применит CRD первым |
+| cert-manager CrashLoopBackOff «Gateway API CRDs do not seem to be present» | стартовал раньше, чем envoy-gateway поставил Gateway API CRD | `kubectl -n infra rollout restart deploy cert-manager` |
+| ApplicationSet не генерирует apps | неверный `gitops_repo_url` или недоступный форк | `kubectl describe applicationset infra -n argocd`, `kubectl logs -n argocd deploy/argocd-applicationset-controller` |
+| Application `ComparisonError: ... is not permitted in project` | AppProject блокирует kind/namespace | `kubectl get appproject <name> -n argocd -o yaml`, сверить whitelist |
+| `sops` не видит `.sops.yaml` | правила ищутся вверх по дереву | запускать `sops` из `repo/secrets/` |
 | kubeconfig смотрит не туда | после нескольких apply | `kubectl config get-contexts`, переключиться на YC-контекст |
 
 ---
 
-## 15. Очистка стенда
+## 14. Очистка стенда
 
 ```bash
-# 1) снять LoadBalancer, чтобы не подвис terraform destroy
-kubectl -n argocd patch svc argocd-server -p '{"spec":{"type":"ClusterIP"}}'
+# 1) снять LoadBalancer, созданный Envoy Gateway — иначе YC не даст удалить subnet
+kubectl -n infra delete svc -l gateway.envoyproxy.io/owning-gateway-name=public --ignore-not-found
 
-# 2) удалить Applications и ApplicationSet (иначе finalizer'ы могут мешать)
-kubectl delete applicationset nginx-appset -n argocd --ignore-not-found
-kubectl delete application --all -n argocd --ignore-not-found
+# 2) удалить Applications и ApplicationSet'ы (finalizer'ы могут мешать destroy)
+kubectl delete applicationset --all -n argocd --ignore-not-found
+kubectl delete application   --all -n argocd --ignore-not-found
 
-# 3) снести кластер
+# 3) снести кластер + DNS-запись + зарезервированный IP
 cd terraform
 terraform destroy
 ```
+
+Если `terraform destroy` зависнет на `yandex_vpc_address.ingress` — значит не успели снять LB. Посмотреть `yc load-balancer network-load-balancer list`, удалить руками, потом повторить destroy.

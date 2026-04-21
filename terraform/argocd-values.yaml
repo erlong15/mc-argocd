@@ -10,23 +10,13 @@ server:
   service:
     type: ClusterIP
 
-  # Встроенный шаблон чарта argo-cd: templates/argocd-server/httproute.yaml.
-  # Гейт сидит в ns infra — attach'имся к нему, listener https (443).
+  # HTTPRoute НЕ включаем в этом чарте: helm_release выполняется на bootstrap,
+  # когда Gateway API CRDs ещё не установлены (их приносит envoy-gateway).
+  # HTTPRoute лежит в repo/infra/envoy-gateway/templates/argocd-httproute.yaml
+  # и приезжает в одном Argo-синке вместе с CRDs.
   httproute:
-    enabled: true
-    parentRefs:
-      - group: gateway.networking.k8s.io
-        kind: Gateway
-        name: public
-        namespace: infra
-        sectionName: https
-    hostnames:
-      - argocd.erlong.ru
+    enabled: false
 
-  # TLS живёт рядом с Gateway (см. repo/infra/envoy-gateway/templates/certificate.yaml).
-  # Cert в ns infra ссылается listener'ом того же ns — no cross-ns, no ReferenceGrant.
-  # HTTPRoute здесь остаётся: он в ns argocd и attach'ится к Gateway через parentRefs,
-  # TLS-термирование — забота Gateway.
   certificate:
     enabled: false
 

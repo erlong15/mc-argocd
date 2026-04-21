@@ -10,6 +10,11 @@ spec:
   destinations:
     - server: https://kubernetes.default.svc
       namespace: infra
+    # HTTPRoute для argocd-server живёт рядом с бэкендом в ns argocd
+    # (repo/infra/envoy-gateway/templates/argocd-httproute.yaml),
+    # чтобы не разводить ReferenceGrant cross-ns.
+    - server: https://kubernetes.default.svc
+      namespace: argocd
   clusterResourceWhitelist:
     - group: '*'
       kind: '*'
