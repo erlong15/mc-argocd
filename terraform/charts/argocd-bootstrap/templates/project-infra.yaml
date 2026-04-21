@@ -15,6 +15,11 @@ spec:
     # чтобы не разводить ReferenceGrant cross-ns.
     - server: https://kubernetes.default.svc
       namespace: argocd
+    # cert-manager-webhook-yc'у нужен RoleBinding в kube-system, чтобы через APIService
+    # aggregation читать extension-apiserver-authentication-reader (configmap
+    # requestheader-ca). Без этого kube-apiserver не аутентифицирует вебхук.
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
   clusterResourceWhitelist:
     - group: '*'
       kind: '*'
