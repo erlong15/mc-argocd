@@ -12,6 +12,10 @@ spec:
         revision: {{ .Values.targetRevision | quote }}
         directories:
           - path: {{ printf "%s/*" .Values.infraPath | quote }}
+          # projects/ — raw YAML (AppProject + ApplicationSet per env),
+          # обрабатывается отдельным ApplicationSet'ом (appset-infra-projects.yaml).
+          - path: {{ printf "%s/projects" .Values.infraPath | quote }}
+            exclude: true
   template:
     metadata:
       name: '{{`{{ .path.basename }}`}}'

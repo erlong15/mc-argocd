@@ -1,8 +1,5 @@
 {
-  "env": "dev",
-  "namespace": "demo-dev",
   "replicaCount": 1,
-  "host": "nginx-dev.local",
   "cpuRequest": "50m",
   "memoryRequest": "64Mi",
   "cpuLimit": "100m",

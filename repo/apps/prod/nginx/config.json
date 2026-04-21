@@ -1,8 +1,5 @@
 {
-  "env": "prod",
-  "namespace": "demo-prod",
   "replicaCount": 2,
-  "host": "nginx-prod.local",
   "cpuRequest": "100m",
   "memoryRequest": "128Mi",
   "cpuLimit": "200m",

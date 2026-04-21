@@ -67,6 +67,12 @@ resource "helm_release" "argocd_bootstrap" {
       targetRevision = "main"
       infraPath      = "repo/infra"
       lbIp           = yandex_vpc_address.ingress.external_ipv4_address[0].address
+      # helm-провайдер сравнивает values и Chart.yaml version, но не содержимое templates/.
+      # Хешируем файлы чарта, чтобы любая правка темплейта триггерила upgrade.
+      _chartSha = sha1(join("", [
+        for f in fileset("${path.module}/charts/argocd-bootstrap", "**") :
+        filesha1("${path.module}/charts/argocd-bootstrap/${f}")
+      ]))
     })
   ]
 

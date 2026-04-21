@@ -1,0 +1,40 @@
+{{/*
+  Отдельный ApplicationSet для repo/infra/projects/{env}/*.yaml — это raw-YAML
+  (AppProject + ApplicationSet для прикладного слоя), без Helm-чарта.
+  Каждая поддиректория env → свой Application projects-<env>, который
+  плоским apply'ем укладывает AppProject demo-<env> и ApplicationSet apps-<env>.
+*/}}
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: infra-projects
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: {{ .Values.repoUrl | quote }}
+        revision: {{ .Values.targetRevision | quote }}
+        directories:
+          - path: {{ printf "%s/projects/*" .Values.infraPath | quote }}
+  template:
+    metadata:
+      name: 'projects-{{`{{ .path.basename }}`}}'
+    spec:
+      project: infra
+      source:
+        repoURL: {{ .Values.repoUrl | quote }}
+        targetRevision: {{ .Values.targetRevision | quote }}
+        path: '{{`{{ .path.path }}`}}'
+        directory:
+          recurse: false
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: argocd
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - ServerSideApply=true

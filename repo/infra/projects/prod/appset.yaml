@@ -1,0 +1,54 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps-prod
+  namespace: argocd
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  generators:
+    - git:
+        repoURL: https://github.com/erlong15/mc-argocd.git
+        revision: main
+        files:
+          - path: repo/apps/prod/*/config.json
+  template:
+    metadata:
+      name: '{{path.basename}}-prod'
+    spec:
+      project: demo-prod
+      source:
+        repoURL: https://github.com/erlong15/mc-argocd.git
+        targetRevision: main
+        path: repo/charts/nginx-demo
+        helm:
+          releaseName: '{{path.basename}}-prod'
+          values: |
+            fullnameOverride: {{path.basename}}-prod
+            replicaCount: {{replicaCount}}
+            resources:
+              requests:
+                cpu: {{cpuRequest}}
+                memory: {{memoryRequest}}
+              limits:
+                cpu: {{cpuLimit}}
+                memory: {{memoryLimit}}
+            ingress:
+              enabled: false
+            config:
+              indexHtml: |
+                <html>
+                  <body>
+                    <h1>{{path.basename}} / prod</h1>
+                    <p>{{message}}</p>
+                  </body>
+                </html>
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: demo-prod
+      # syncPolicy:
+      #   automated:
+      #     prune: true
+      #     selfHeal: true
+      #   syncOptions:
+      #     - CreateNamespace=true

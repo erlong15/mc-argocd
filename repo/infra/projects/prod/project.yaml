@@ -1,20 +1,16 @@
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: workshop
+  name: demo-prod
   namespace: argocd
 spec:
-  description: Workshop project for ArgoCD masterclass
+  description: Demo applications - prod environment
   sourceRepos:
-    - https://github.com/example/argocd-masterclass-demo.git
+    - https://github.com/erlong15/mc-argocd.git
   destinations:
-    - namespace: demo-dev
-      server: https://kubernetes.default.svc
-    - namespace: demo-prod
-      server: https://kubernetes.default.svc
-  clusterResourceWhitelist:
-    - group: ""
-      kind: Namespace
+    - server: https://kubernetes.default.svc
+      namespace: demo-prod
+  clusterResourceWhitelist: []
   namespaceResourceWhitelist:
     - group: ""
       kind: ConfigMap

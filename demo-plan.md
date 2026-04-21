@@ -5,12 +5,12 @@
 ## Цель демо
 
 Показать минимальный GitOps-цикл:
-- кластер + ArgoCD + инфраструктурный слой одним `terraform apply`
-- self-bootstrap: ArgoCD сам ставит Envoy Gateway и cert-manager через ApplicationSet
-- деплой Helm-приложения в dev/prod через ApplicationSet
-- manual sync → переключение на automated + self-heal
+- кластер + ArgoCD + весь GitOps-слой одним `terraform apply`
+- трёхуровневый self-bootstrap: terraform → bootstrap-чарт → infra-projects → per-env ApplicationSet → прикладной Application
+- деплой Helm-приложения в dev/prod через ApplicationSet per env
+- manual sync → переключение на automated + self-heal коммитом в гит
 - drift detection / self-heal / rollback через `git revert`
-- AppProject как граница безопасности
+- AppProject как граница безопасности (infra, demo-dev, demo-prod)
 - pipeline шифрования секретов (SOPS)
 
 **Общее время:** ~50–60 мин (из них 15–20 мин ждём `terraform apply` + первый sync инфраструктуры + выпуск LE-сертификата).
@@ -66,9 +66,11 @@ terraform apply
 - VPC / subnet / managed K8s кластер + node group
 - резервирует статический IP для входящего трафика
 - создаёт A-запись `${var.domain}` → этот IP
-- ставит ArgoCD (чарт `argo-cd` 9.5.2, `server.service.type: ClusterIP`, `server.httproute.enabled: true` с parentRef на Gateway `public` в ns `infra`)
+- ставит ArgoCD (чарт `argo-cd` 9.5.2, `server.service.type: ClusterIP`, `server.httproute.enabled: false` — HTTPRoute приезжает из гита вместе с Gateway API CRDs, см. ниже)
 - ставит bootstrap-чарт (`terraform/charts/argocd-bootstrap`): AppProject `infra` + ApplicationSet, генерирующий по одному Application на каждую поддиректорию `repo/infra/*`
-- ApplicationSet затем поднимает внутри кластера Envoy Gateway (pinned к зарезервированному IP через `EnvoyProxy.spec.provider.kubernetes.envoyService.loadBalancerIP`) и cert-manager (c HTTP-01 через Gateway API)
+- ApplicationSet затем поднимает внутри кластера Envoy Gateway (pinned к зарезервированному IP через `EnvoyProxy.spec.provider.kubernetes.envoyService.loadBalancerIP`), HTTPRoute `argocd-server` (в ns `argocd`, рядом с бэкендом — cross-ns без ReferenceGrant) и cert-manager (c HTTP-01 через Gateway API)
+
+Почему HTTPRoute живёт в `repo/infra/envoy-gateway/`, а не в чарте argo-cd: на старте Gateway API CRDs ещё не установлены, и `helm_release.argocd` падал бы с `no matches for kind "HTTPRoute"`. Теперь Gateway API CRDs и HTTPRoute едут в одном Argo-синке `envoy-gateway` → Argo сам упорядочит CRD-then-CR. Плата за это — в AppProject `infra` в `destinations` разрешён и ns `argocd` (HTTPRoute) помимо `infra`.
 
 После apply:
 
@@ -132,47 +134,45 @@ kubectl -n infra describe challenge | tail -30
 
 ---
 
-## 3. Workshop AppProject (1 мин)
+## 3. Разобрать дерево GitOps-слоёв (2 мин)
 
-Bootstrap-чарт создал только `infra` project. Для демо-приложений используем отдельный `workshop`:
-
-Сначала подменить `sourceRepos` в `repo/bootstrap/project.yaml` на ваш форк (если форкали под другим именем). Дефолт — `https://github.com/example/argocd-masterclass-demo.git`, надо поправить на `https://github.com/<you>/mc-argocd.git`:
+После terraform apply ArgoCD уже управляет собой целиком. Показать иерархию:
 
 ```bash
-cd ../repo
-sed -i.bak "s|https://github.com/example/argocd-masterclass-demo.git|https://github.com/<you>/mc-argocd.git|g" \
-  bootstrap/project.yaml apps/appset-nginx.yaml
-find . -name '*.bak' -delete
-git add bootstrap/project.yaml apps/appset-nginx.yaml
-git commit -m "point workshop project at my fork"
-git push
-
-kubectl apply -f bootstrap/project.yaml
-kubectl get appprojects -n argocd
+kubectl -n argocd get appprojects
+# infra, demo-dev, demo-prod
+kubectl -n argocd get applicationsets
+# infra, infra-projects, apps-dev, apps-prod
+kubectl -n argocd get applications
+# envoy-gateway, cert-manager, projects-dev, projects-prod, nginx-dev, nginx-prod
 ```
 
-Пояснить на примере:
-- ограничили `sourceRepos` → только наш remote
-- ограничили `destinations` → только namespaces `demo-dev`, `demo-prod`
-- whitelists kinds → безопасная рамка multi-tenancy
-- есть и второй AppProject `infra`, созданный terraform'ом (`kubectl get appproject infra -n argocd -o yaml`) — с более строгим списком ns (только `infra`)
+Нарисовать на доске три уровня:
 
-Namespaces `demo-dev` / `demo-prod` уже созданы terraform'ом (см. `terraform/argocd.tf`).
+1. **Terraform** — ставит ArgoCD + bootstrap-чарт (`argocd-bootstrap`).
+2. **bootstrap-чарт** — создаёт AppProject `infra` + два ApplicationSet:
+   - `infra` → `repo/infra/*` (envoy-gateway, cert-manager) как Helm-чарты.
+   - `infra-projects` → `repo/infra/projects/*` как raw-YAML; каждый Application `projects-{env}` укладывает внутрь ns `argocd` ещё один AppProject (`demo-dev`/`demo-prod`) и ещё один ApplicationSet (`apps-dev`/`apps-prod`).
+3. **apps-dev / apps-prod** — по одному Application на каждый каталог `repo/apps/{env}/<app>/` с `config.json`.
+
+Ключевые границы:
+- `sourceRepos` у всех project'ов ограничен нашим форком.
+- `destinations` у `demo-dev` — только ns `demo-dev`; у `demo-prod` — только `demo-prod`.
+- `destinations` у `infra` — `infra` + `argocd` (HTTPRoute для argocd-server лежит в ns argocd рядом с бэкендом).
+
+Namespaces `demo-dev`/`demo-prod` уже созданы terraform'ом.
 
 ---
 
-## 4. Развернуть ApplicationSet без auto-sync (3 мин)
-
-ApplicationSet в `apps/appset-nginx.yaml` умышленно без `automated` — сначала показываем manual sync.
+## 4. Осмотреть состояние приложений (2 мин)
 
 ```bash
-kubectl apply -f apps/appset-nginx.yaml
-kubectl get applicationset -n argocd
-kubectl get applications -n argocd
 argocd app list
+argocd app get nginx-dev
+argocd app get nginx-prod
 ```
 
-**Что должен увидеть зритель:** появились `nginx-dev` и `nginx-prod` со статусом `OutOfSync` / `Missing`.
+**Что должен увидеть зритель:** `nginx-dev` и `nginx-prod` в статусе `OutOfSync` / `Missing` — ApplicationSet'ы `apps-{dev,prod}` умышленно без `automated` (закомментирован блок в `repo/infra/projects/{env}/appset.yaml`). В UI — дерево из трёх уровней project → appset → app.
 
 ---
 
@@ -191,39 +191,43 @@ kubectl get deploy,svc,cm -n demo-prod
 Пояснить различия prod vs dev:
 - разные `replicaCount` (1 vs 2)
 - разные resources
-- один chart, два env — вся разница в `environments/<env>/config.json`
+- один chart, два env — вся разница в `repo/apps/<env>/nginx/config.json`
 
 ---
 
 ## 6. Включить auto-sync + self-heal (2 мин)
 
-В `apps/appset-nginx.yaml` раскомментировать блок `syncPolicy.automated`:
+Раскомментировать блок `syncPolicy.automated` в обоих `repo/infra/projects/{dev,prod}/appset.yaml` и запушить:
 
 ```bash
+cd ../repo
 sed -i.bak '/# syncPolicy:/,/# *- CreateNamespace=true/ s/^\( *\)# /\1/' \
-  apps/appset-nginx.yaml
-rm apps/appset-nginx.yaml.bak
-git add apps/appset-nginx.yaml
-git commit -m "enable auto-sync + self-heal"
+  infra/projects/dev/appset.yaml infra/projects/prod/appset.yaml
+find infra/projects -name '*.bak' -delete
+git add infra/projects/dev/appset.yaml infra/projects/prod/appset.yaml
+git commit -m "enable auto-sync + self-heal for nginx"
 git push
-kubectl apply -f apps/appset-nginx.yaml
 ```
+
+Проверка: `apps-dev`/`apps-prod` ApplicationSet'ы пересоздадут дочерние Application'ы уже с автосинком. Через ~30 сек `nginx-dev`/`nginx-prod` → `Synced/Healthy` без ручного `argocd app sync`.
 
 Проговорить риски:
 - `prune: true` удаляет ресурсы, пропавшие из Git
 - `selfHeal: true` затирает ручные изменения
 - в проде прикрывается sync windows + `ignoreDifferences`
 
+Это ещё один показ *всех* слоёв GitOps: мы правим манифест ApplicationSet'а внутри `infra/projects/`, `infra-projects`-Application подхватывает его, пересоздаёт подчинённый ApplicationSet, тот — пересоздаёт Application'ы.
+
 ---
 
 ## 7. Изменение через Git (3 мин)
 
-Поменять в `environments/dev/config.json` `replicaCount` с 1 на 2:
+Поменять `replicaCount` в `repo/apps/dev/nginx/config.json` с 1 на 2:
 
 ```bash
-jq '.replicaCount = 2' environments/dev/config.json > .tmp && mv .tmp environments/dev/config.json
-git add environments/dev/config.json
-git commit -m "scale dev to 2 replicas"
+jq '.replicaCount = 2' apps/dev/nginx/config.json > .tmp && mv .tmp apps/dev/nginx/config.json
+git add apps/dev/nginx/config.json
+git commit -m "scale nginx-dev to 2 replicas"
 git push
 ```
 
@@ -279,26 +283,26 @@ metadata:
   name: break-project
   namespace: argocd
 spec:
-  project: workshop
+  project: demo-dev
   source:
     repoURL: https://github.com/<you>/mc-argocd.git
     path: repo/charts/nginx-demo
     targetRevision: main
   destination:
     server: https://kubernetes.default.svc
-    namespace: kube-system
+    namespace: demo-prod
 EOF
 argocd app get break-project
 ```
 
-**Что должен увидеть зритель:** статус с `ComparisonError`/`Project ... destination is not permitted` — проект блокирует деплой в чужой namespace.
+**Что должен увидеть зритель:** статус с `ComparisonError`/`Project demo-dev destination demo-prod is not permitted` — project `demo-dev` разрешает только свой namespace. Это и есть граница multi-tenancy: даже если злоумышленник изменит yaml — Argo не применит.
 
 Убрать:
 ```bash
 kubectl delete application break-project -n argocd
 ```
 
-Заодно можно показать ту же защиту и на `infra`-project: попытаться создать Application с `project: infra`, целящий в `kube-system` — получит отказ. cert-manager в прошлом релизе сам нарывался на эту границу, когда пытался складывать leader-election RBAC в `kube-system`; поэтому в `repo/infra/cert-manager/values.yaml` явно выставлено `cert-manager.global.leaderElection.namespace: infra`.
+Аналогично защищён `infra`-project: попытка Application с `project: infra` в `kube-system` отбивается. cert-manager в прошлом релизе сам нарывался на эту границу, когда пытался складывать leader-election RBAC в `kube-system`; поэтому в `repo/infra/cert-manager/values.yaml` явно выставлено `cert-manager.global.leaderElection.namespace: infra`.
 
 ---
 
@@ -369,6 +373,10 @@ cd ../..
 | HTTPS не открывается / `ERR_CERT_AUTHORITY_INVALID` | cert-manager ещё не выписал сертификат | `kubectl -n infra get certificate,order,challenge`; если challenge `invalid` — `kubectl -n infra delete certificate argocd` и дождаться повторного выпуска |
 | LB получил не зарезервированный IP | YC CCM читает `spec.loadBalancerIP`, а не YC-аннотацию | проверить `kubectl -n infra get svc -l gateway.envoyproxy.io/owning-gateway-name=public -o yaml`, там должно быть `spec.loadBalancerIP`; если нет — обновить `repo/infra/envoy-gateway/templates/envoyproxy.yaml` и засинкать |
 | envoy-gateway app падает с `Certificate CRD not found` | ApplicationSet'ы ставятся параллельно, envoy-gateway sync'ится раньше, чем cert-manager поставил CRD | Certificate живёт в `repo/infra/cert-manager/templates/argocd-certificate.yaml`, не в envoy-gateway — CRD и CR в одном Application, Argo применит CRD первым |
+| `helm_release.argocd` падает на `no matches for kind "HTTPRoute"` | bootstrap: Gateway API CRDs ещё не установлены | в `terraform/argocd-values.yaml` `server.httproute.enabled: false`; HTTPRoute живёт в `repo/infra/envoy-gateway/templates/argocd-httproute.yaml` и приезжает в одном Argo-синке с CRDs |
+| `envoy-gateway` app висит `OutOfSync` на HTTPRoute | server-side apply проставляет `backendRefs[].weight: 1` по умолчанию, в манифесте не было | `weight: 1` уже задан явно; если видишь diff — проверить, что в `argocd-httproute.yaml` он есть |
+| `terraform apply` не видит правок в bootstrap-чарте | helm-provider сравнивает `values` и `Chart.yaml version`, не содержимое templates/ | в values прокинут `_chartSha` (sha1 по файлам чарта) — любая правка триггерит upgrade; если очень надо — bump в `Chart.yaml` |
+| Application показывает `Application has N orphaned resources` | в ns `infra` висят ресурсы, созданные оператором (envoy-infra-public-*), cert-manager'ом и кластером — не из Git | в AppProject `infra.orphanedResources.ignore` перечислены известные паттерны (envoy-*, cert-manager-webhook-ca, letsencrypt-account-key, argocd-tls, kube-root-ca.crt, default SA) |
 | cert-manager CrashLoopBackOff «Gateway API CRDs do not seem to be present» | стартовал раньше, чем envoy-gateway поставил Gateway API CRD | `kubectl -n infra rollout restart deploy cert-manager` |
 | ApplicationSet не генерирует apps | неверный `gitops_repo_url` или недоступный форк | `kubectl describe applicationset infra -n argocd`, `kubectl logs -n argocd deploy/argocd-applicationset-controller` |
 | Application `ComparisonError: ... is not permitted in project` | AppProject блокирует kind/namespace | `kubectl get appproject <name> -n argocd -o yaml`, сверить whitelist |

@@ -23,3 +23,40 @@ spec:
       kind: '*'
   orphanedResources:
     warn: true
+    # Динамика, не управляемая гитом: её создают операторы/кластер по факту наличия CR.
+    # Оставляем warn=true, чтобы ловить реальный мусор — но прячем ожидаемое.
+    ignore:
+      # Envoy Gateway оператор штампует envoy-infra-<gw-name>-<hash> (Deployment/Service/SA/CM).
+      - group: ""
+        kind: Service
+        name: envoy-*
+      - group: apps
+        kind: Deployment
+        name: envoy-*
+      - group: ""
+        kind: ConfigMap
+        name: envoy-*
+      - group: ""
+        kind: ServiceAccount
+        name: envoy-*
+      # envoy-gateway операторские секреты (envoy, envoy-gateway, envoy-oidc-hmac, envoy-rate-limit).
+      - group: ""
+        kind: Secret
+        name: envoy*
+      # cert-manager динамика: webhook CA, ACME account, выданные TLS-серты.
+      - group: ""
+        kind: Secret
+        name: cert-manager-webhook-ca
+      - group: ""
+        kind: Secret
+        name: letsencrypt-account-key
+      - group: ""
+        kind: Secret
+        name: argocd-tls
+      # Создаётся самим кубером при создании namespace.
+      - group: ""
+        kind: ConfigMap
+        name: kube-root-ca.crt
+      - group: ""
+        kind: ServiceAccount
+        name: default
