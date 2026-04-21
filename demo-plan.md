@@ -1,6 +1,6 @@
 # План демонстрации ArgoCD
 
-Кластер: Yandex Managed Kubernetes, поднятый через `terraform/`. Тем же `terraform apply` в кластер заезжает ArgoCD + bootstrap-чарт, который создаёт AppProject `infra` и ApplicationSet'ом раскатывает инфраструктуру (Envoy Gateway + cert-manager). ArgoCD выставлен наружу через HTTPRoute + Let's Encrypt, UI доступен по `https://argocd.erlong.ru` (или тому, что указано в `var.domain`).
+Кластер: Yandex Managed Kubernetes, поднятый через `terraform/`. Тем же `terraform apply` в кластер заезжает ArgoCD + bootstrap-чарт, который создаёт AppProject `infra` и ApplicationSet'ом раскатывает инфраструктуру (Envoy Gateway + cert-manager-webhook-yandex). ArgoCD выставлен наружу через HTTPRoute + Let's Encrypt staging (DNS-01 через Yandex Cloud DNS), UI доступен по `https://argocd.erlong.ru` (или тому, что указано в `var.domain`). Сертификат **staging** — браузер его не доверяет, это намеренно: у демо нет бюджета на прод-лимиты LE.
 
 ## Цель демо
 
@@ -32,9 +32,10 @@ git --version
 ```
 
 Проверить:
-- доступ в интернет до `github.com`, `argoproj.github.io`, `docker.io/envoyproxy`, `acme-v02.api.letsencrypt.org`
+- доступ в интернет до `github.com`, `argoproj.github.io`, `docker.io/envoyproxy`, `acme-staging-v02.api.letsencrypt.org`, `cr.yandex` (OCI-чарт webhook'а)
 - есть форк `https://github.com/erlong15/mc-argocd` на ваш аккаунт — именно его ArgoCD будет пуллить через `gitops_repo_url`
-- домен `var.domain` (дефолт `argocd.erlong.ru`) находится в Cloud DNS зоне `var.dns_zone_name` (дефолт `erlong-ru`). Terraform создаст A-запись сам, но зона должна существовать и обслуживаться в YC DNS
+- домен `var.domain` (дефолт `argocd.erlong.ru`) находится в Cloud DNS зоне `var.dns_zone_name` (дефолт `erlong-ru`). Terraform создаст A-запись сам, но зона должна существовать и обслуживаться в YC DNS (туда же пишется DNS-01 challenge-запись от cert-manager-webhook-yandex)
+- (опционально для секции 11 «SOPS») сгенерирован age-ключ: `age-keygen -o ~/.config/sops/age/keys.txt`; путь можно прокинуть в `var.age_key_file` заранее
 
 Brew-установка недостающего:
 
@@ -44,7 +45,7 @@ brew install argocd sops age
 
 ---
 
-## 1. Поднять кластер + ArgoCD + инфраструктуру (5 мин на ввод, 15–20 мин ждать)
+## 1. Поднять кластер + ArgoCD + инфраструктуру (5 мин на ввод, 10–15 мин ждать)
 
 ```bash
 cd terraform
@@ -52,7 +53,7 @@ cat > terraform.tfvars <<EOF
 cloud_id        = "<ваш cloud_id>"
 folder_id       = "<ваш folder_id>"
 gitops_repo_url = "https://github.com/<you>/mc-argocd.git"
-# опционально — если хотите, чтобы ArgoCD сразу умел расшифровывать SOPS (см. секцию 12):
+# опционально — если хотите, чтобы ArgoCD сразу умел расшифровывать SOPS (см. секцию 11):
 # age_key_file  = "/Users/<you>/.config/sops/age/keys.txt"
 EOF
 
@@ -67,8 +68,9 @@ terraform apply
 - резервирует статический IP для входящего трафика
 - создаёт A-запись `${var.domain}` → этот IP
 - ставит ArgoCD (чарт `argo-cd` 9.5.2, `server.service.type: ClusterIP`, `server.httproute.enabled: false` — HTTPRoute приезжает из гита вместе с Gateway API CRDs, см. ниже)
-- ставит bootstrap-чарт (`terraform/charts/argocd-bootstrap`): AppProject `infra` + ApplicationSet, генерирующий по одному Application на каждую поддиректорию `repo/infra/*`
-- ApplicationSet затем поднимает внутри кластера Envoy Gateway (pinned к зарезервированному IP через `EnvoyProxy.spec.provider.kubernetes.envoyService.loadBalancerIP`), HTTPRoute `argocd-server` (в ns `argocd`, рядом с бэкендом — cross-ns без ReferenceGrant) и cert-manager (c HTTP-01 через Gateway API)
+- создаёт YC service-account `cert-manager-webhook` с ролью `dns.editor`, выпускает RSA-ключ и кладёт его в ns `infra` как Secret `cm-sa-creds` (terraform владеет Secret'ом единолично — мы отдельно вендорили вебхук-чарт без `secret.yaml`, чтобы helm его не перезаписывал)
+- ставит bootstrap-чарт (`terraform/charts/argocd-bootstrap`): AppProject `infra` + ApplicationSet, генерирующий по одному Application на каждую поддиректорию `repo/infra/*`; `folder_id` прокидывается в `valuesObject` ApplicationSet'а → попадает в ClusterIssuer `yc-clusterissuer`
+- ApplicationSet поднимает Envoy Gateway (pinned к зарезервированному IP через `EnvoyProxy.spec.provider.kubernetes.envoyService.loadBalancerIP`), HTTPRoute `argocd-server` (в ns `argocd`, рядом с бэкендом — cross-ns без ReferenceGrant), базовый cert-manager (jetstack) и отдельно вендорный webhook-yc (DNS-01 через YC DNS, ClusterIssuer `yc-clusterissuer` на LE staging)
 
 Почему HTTPRoute живёт в `repo/infra/envoy-gateway/`, а не в чарте argo-cd: на старте Gateway API CRDs ещё не установлены, и `helm_release.argocd` падал бы с `no matches for kind "HTTPRoute"`. Теперь Gateway API CRDs и HTTPRoute едут в одном Argo-синке `envoy-gateway` → Argo сам упорядочит CRD-then-CR. Плата за это — в AppProject `infra` в `destinations` разрешён и ns `argocd` (HTTPRoute) помимо `infra`.
 
@@ -83,7 +85,7 @@ kubectl get pods -n infra
 kubectl -n argocd get applicationset,app
 ```
 
-**Что должен увидеть зритель:** 1–2 Ready-ноды, ArgoCD-поды Running, в ns `infra` поднимаются envoy-gateway + cert-manager, в ArgoCD два Application'а `envoy-gateway` и `cert-manager` движутся в `Synced/Healthy`.
+**Что должен увидеть зритель:** 1–2 Ready-ноды, ArgoCD-поды Running, в ns `infra` поднимаются envoy-gateway + cert-manager + webhook-yc, в ArgoCD три Application'а `envoy-gateway`, `cert-manager` и `cert-manager-webhook-yc` движутся в `Synced/Healthy`. Webhook может пару раз сфейлиться с «no matches for kind Certificate/Issuer», пока jetstack не поставит CRDs — Argo retry'нет сам.
 
 ---
 
@@ -101,20 +103,20 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 Сценарий A — инфраструктура уже поднялась, сертификат выписан:
 
 ```bash
-# проверка, что LE-cert уже есть и Gateway зелёный:
+# проверка, что LE staging-cert уже есть и Gateway зелёный:
 kubectl -n infra get certificate argocd -o jsonpath='{.status.conditions[-1]}{"\n"}'
 kubectl -n infra get gateway public -o jsonpath='{.status.listeners[*].name}{"\n"}'
-curl -sI https://argocd.erlong.ru/ | head -1
+curl -skI https://argocd.erlong.ru/ | head -1   # -k: staging-CA браузер не доверяет
 ```
 
-Открыть `https://argocd.erlong.ru` в браузере → логин `admin` / выданный пароль.
+Открыть `https://argocd.erlong.ru` в браузере → «Not secure» (staging CA) → продолжить → логин `admin` / выданный пароль.
 
 ```bash
-argocd login argocd.erlong.ru --username admin --password '<PASTE_PASSWORD>' --grpc-web
+argocd login argocd.erlong.ru --username admin --password '<PASTE_PASSWORD>' --grpc-web --insecure
 argocd account get-user-info
 ```
 
-Сценарий B — HTTPS ещё не готов (первый apply, cert-manager в процессе HTTP-01 challenge):
+Сценарий B — HTTPS ещё не готов (идёт DNS-01 challenge):
 
 ```bash
 # пока нет TLS — достучаться до argocd-server через port-forward
@@ -128,9 +130,11 @@ argocd login localhost:8080 --username admin --password '<PASTE_PASSWORD>' --pla
 ```bash
 kubectl -n infra get certificate,certificaterequest,order,challenge
 kubectl -n infra describe challenge | tail -30
+# параллельно проверить, что вебхук создал TXT-запись в YC DNS:
+yc dns zone list-record-sets --name "$DNS_ZONE" | grep -E 'TXT.*_acme-challenge'
 ```
 
-**Что должен увидеть зритель:** пустой список Applications (кроме `envoy-gateway` и `cert-manager`) в UI. Здесь уместно проговорить, что инфраструктурный слой ArgoCD уже управляет сам собой — далее добавляем прикладной слой.
+**Что должен увидеть зритель:** пустой список Applications (кроме `envoy-gateway`, `cert-manager`, `cert-manager-webhook-yc`) в UI. Здесь уместно проговорить, что инфраструктурный слой ArgoCD уже управляет сам собой — далее добавляем прикладной слой.
 
 ---
 
@@ -144,14 +148,14 @@ kubectl -n argocd get appprojects
 kubectl -n argocd get applicationsets
 # infra, infra-projects, apps-dev, apps-prod
 kubectl -n argocd get applications
-# envoy-gateway, cert-manager, projects-dev, projects-prod, nginx-dev, nginx-prod
+# envoy-gateway, cert-manager, cert-manager-webhook-yc, projects-dev, projects-prod, nginx-dev, nginx-prod
 ```
 
 Нарисовать на доске три уровня:
 
 1. **Terraform** — ставит ArgoCD + bootstrap-чарт (`argocd-bootstrap`).
 2. **bootstrap-чарт** — создаёт AppProject `infra` + два ApplicationSet:
-   - `infra` → `repo/infra/*` (envoy-gateway, cert-manager) как Helm-чарты.
+   - `infra` → `repo/infra/*` (envoy-gateway, cert-manager, cert-manager-webhook-yc) как Helm-чарты.
    - `infra-projects` → `repo/infra/projects/*` как raw-YAML; каждый Application `projects-{env}` укладывает внутрь ns `argocd` ещё один AppProject (`demo-dev`/`demo-prod`) и ещё один ApplicationSet (`apps-dev`/`apps-prod`).
 3. **apps-dev / apps-prod** — по одному Application на каждый каталог `repo/apps/{env}/<app>/` с `config.json`.
 
@@ -308,6 +312,8 @@ kubectl delete application break-project -n argocd
 
 ## 11. SOPS pipeline (5 мин)
 
+DNS-01-ключ YC у нас НЕ через SOPS: terraform и так владеет SA, проще положить JSON сразу в `kubernetes_secret cm-sa-creds`, чем гонять plaintext через руки. SOPS показываем на прикладном секрете.
+
 Сгенерировать age-ключ (если ещё не делали перед `terraform apply`):
 
 ```bash
@@ -320,7 +326,7 @@ echo "public: $PUBKEY"
 
 Вставить `$PUBKEY` в `repo/secrets/.sops.yaml` (поле `age`).
 
-Если в `terraform.tfvars` был задан `age_key_file` — приватный ключ уже положен в Secret `helm-secrets-private-keys` в ns argocd и смонтирован в `argocd-repo-server` (см. `terraform/argocd-values.yaml:44-92`). Если нет — создать Secret руками:
+Если в `terraform.tfvars` был задан `age_key_file` — приватный ключ уже положен в Secret `helm-secrets-private-keys` в ns argocd и смонтирован в `argocd-repo-server` (см. `terraform/argocd-values.yaml`). Если нет — создать Secret руками:
 
 ```bash
 kubectl -n argocd create secret generic helm-secrets-private-keys \
@@ -336,7 +342,6 @@ cp dev-secret.example.yaml dev-secret.yaml
 # отредактировать значения в dev-secret.yaml
 sops -e dev-secret.yaml > dev-secret.enc.yaml
 rm dev-secret.yaml   # обязательно: plaintext не коммитим
-cat dev-secret.enc.yaml
 sops -d dev-secret.enc.yaml   # проверка расшифровки
 git add .sops.yaml dev-secret.enc.yaml
 git commit -m "add encrypted dev secret"
@@ -344,12 +349,11 @@ git push
 cd ../..
 ```
 
-`repo/.gitignore` блокирует коммит любых `secrets/*.yaml`, кроме `*.enc.yaml` и `.sops.yaml`.
-
 Проговорить:
 - в Git хранится только ciphertext
 - приватный ключ живёт в `~/.config/sops/age/keys.txt` и **не уходит** в Git
-- argocd-repo-server умеет расшифровывать через plugin helm-secrets (в чарте в `repoServer.initContainers` скачиваются `sops`, `age`, helm-secrets, `SOPS_AGE_KEY_FILE` указывает на смонтированный Secret)
+- `argocd-repo-server` расшифровывает через helm-secrets (подтягивается в init-контейнере, см. `terraform/argocd-values.yaml:56-82`)
+- SOPS оправдан там, где секрет **рождается у человека** (DB-пароль, токен); когда секрет рождается у terraform — честнее k8s Secret напрямую
 - альтернативы: External Secrets Operator, Vault, KSOPS
 
 ---
@@ -370,15 +374,22 @@ cd ../..
 | Симптом | Причина | Что делать |
 |---|---|---|
 | `argocd-initial-admin-secret not found` | password-secret удаляется после первой смены пароля | `argocd account update-password`; если потерян — `kubectl -n argocd delete pod -l app.kubernetes.io/name=argocd-server` и заново из initial-admin-secret (только если он ещё не удалён) |
-| HTTPS не открывается / `ERR_CERT_AUTHORITY_INVALID` | cert-manager ещё не выписал сертификат | `kubectl -n infra get certificate,order,challenge`; если challenge `invalid` — `kubectl -n infra delete certificate argocd` и дождаться повторного выпуска |
+| HTTPS открывается, но браузер «Not secure» | LE staging CA браузером не доверяется (так задумано) | это ок; для curl использовать `-k`, для argocd — `--insecure` |
+| HTTPS не открывается / `ERR_CERT_AUTHORITY_INVALID` (staging CA) vs сертификат вообще не выпустился | разные сценарии | `kubectl -n infra get certificate,order,challenge`; если challenge `invalid` с `Presenting`/`no such host` — проверить логи вебхука: `kubectl -n infra logs deploy/cert-manager-webhook-yc`. Если `403`/`401` — ключ YC SA невалидный (см. ниже) |
+| webhook-yc в логах `PermissionDenied` / `401` при вызове YC DNS API | роль `dns.editor` не назначена или ключ протух | `yc iam service-account list`, `yc resource-manager folder list-access-bindings <folder_id>` — должен быть `roles/dns.editor` на SA `cert-manager-webhook`. Если нет — `terraform apply` (ресурс `yandex_resourcemanager_folder_iam_member.cert_manager_dns_editor`) |
+| Secret `cm-sa-creds` пустой / вебхук логирует `401 Unauthorized` | кто-то поправил чарт и вернул Secret-шаблон | проверить `repo/infra/cert-manager-webhook-yc/templates/` — никакого `secret.yaml` там быть не должно; `kubectl -n infra get secret cm-sa-creds -o jsonpath='{.data.key\.json}' \| base64 -d \| head` |
+| ClusterIssuer `yc-clusterissuer` в `Not Ready`, `folder_id` пустой | terraform не докинул `folderId` в bootstrap-values → ClusterIssuer отрендерился с пустым полем | `helm template terraform/charts/argocd-bootstrap ...` локально; убедиться, что `appset-infra.yaml` содержит `clusterIssuer.folder_id: "{{ .Values.folderId }}"` |
+| `terraform apply` падает: `namespaces "infra" already exists` | ns создали при прошлом apply, terraform-state потеряли | `terraform import kubernetes_namespace.infra infra` |
+| DNS-01 challenge висит в `pending` > 5 мин | TXT-запись не прилетела в YC DNS | `yc dns zone list-record-sets --name <zone>` — там должна быть `_acme-challenge.argocd` TXT; если нет — логи вебхука; если есть, но LE не видит — проверить NS-делегирование зоны |
 | LB получил не зарезервированный IP | YC CCM читает `spec.loadBalancerIP`, а не YC-аннотацию | проверить `kubectl -n infra get svc -l gateway.envoyproxy.io/owning-gateway-name=public -o yaml`, там должно быть `spec.loadBalancerIP`; если нет — обновить `repo/infra/envoy-gateway/templates/envoyproxy.yaml` и засинкать |
-| envoy-gateway app падает с `Certificate CRD not found` | ApplicationSet'ы ставятся параллельно, envoy-gateway sync'ится раньше, чем cert-manager поставил CRD | Certificate живёт в `repo/infra/cert-manager/templates/argocd-certificate.yaml`, не в envoy-gateway — CRD и CR в одном Application, Argo применит CRD первым |
+| envoy-gateway app падает с `Certificate CRD not found` | ApplicationSet'ы ставятся параллельно, envoy-gateway sync'ится раньше, чем cert-manager поставил CRD | ArgoCD retry'нет. Если залипло — засинкать cert-manager вручную (`argocd app sync cert-manager`) и подождать; Certificate для argocd.erlong.ru живёт в `repo/infra/envoy-gateway/templates/argocd-certificate.yaml` |
+| `cert-manager-webhook-yc` висит в `Error` с `no matches for kind Issuer/Certificate` | webhook-yc засинкался раньше, чем jetstack cert-manager поставил CRDs | Argo retry'нет сам; если застряло — `argocd app sync cert-manager-webhook-yc` после того, как `cert-manager` в `Healthy` |
 | `helm_release.argocd` падает на `no matches for kind "HTTPRoute"` | bootstrap: Gateway API CRDs ещё не установлены | в `terraform/argocd-values.yaml` `server.httproute.enabled: false`; HTTPRoute живёт в `repo/infra/envoy-gateway/templates/argocd-httproute.yaml` и приезжает в одном Argo-синке с CRDs |
 | `envoy-gateway` app висит `OutOfSync` на HTTPRoute | server-side apply проставляет `backendRefs[].weight: 1` по умолчанию, в манифесте не было | `weight: 1` уже задан явно; если видишь diff — проверить, что в `argocd-httproute.yaml` он есть |
 | `apps-dev/apps-prod` ApplicationSet: `error getting project demo-dev: AppProject ... not found` | race: ApplicationSet controller стартовал реконцайл раньше, чем AppProject попал в его кэш | в `project.yaml` выставлен `argocd.argoproj.io/sync-wave: "-1"` — AppProject применится раньше ApplicationSet'а; если ошибка залипла от старого состояния: `kubectl -n argocd rollout restart deploy argocd-applicationset-controller` |
 | `terraform apply` не видит правок в bootstrap-чарте | helm-provider сравнивает `values` и `Chart.yaml version`, не содержимое templates/ | в values прокинут `_chartSha` (sha1 по файлам чарта) — любая правка триггерит upgrade; если очень надо — bump в `Chart.yaml` |
-| Application показывает `Application has N orphaned resources` | в ns `infra` висят ресурсы, созданные оператором (envoy-infra-public-*), cert-manager'ом и кластером — не из Git | в AppProject `infra.orphanedResources.ignore` перечислены известные паттерны (envoy-*, cert-manager-webhook-ca, letsencrypt-account-key, argocd-tls, kube-root-ca.crt, default SA) |
-| cert-manager CrashLoopBackOff «Gateway API CRDs do not seem to be present» | стартовал раньше, чем envoy-gateway поставил Gateway API CRD | `kubectl -n infra rollout restart deploy cert-manager` |
+| Application показывает `Application has N orphaned resources` | в ns `infra` висят ресурсы, созданные оператором (envoy-infra-public-*), cert-manager'ом и кластером — не из Git | в AppProject `infra.orphanedResources.ignore` перечислены известные паттерны (envoy-*, cert-manager-webhook-yc-ca, letsencrypt-account-key, argocd-tls, kube-root-ca.crt, default SA) |
+| cert-manager CrashLoopBackOff «Gateway API CRDs do not seem to be present» | стартовал раньше, чем envoy-gateway поставил Gateway API CRD | `kubectl -n infra rollout restart deploy cert-manager` (флаг `--enable-gateway-api` нужен для Certificate-референсов к Gateway, но требует CRD на старте) |
 | ApplicationSet не генерирует apps | неверный `gitops_repo_url` или недоступный форк | `kubectl describe applicationset infra -n argocd`, `kubectl logs -n argocd deploy/argocd-applicationset-controller` |
 | Application `ComparisonError: ... is not permitted in project` | AppProject блокирует kind/namespace | `kubectl get appproject <name> -n argocd -o yaml`, сверить whitelist |
 | `sops` не видит `.sops.yaml` | правила ищутся вверх по дереву | запускать `sops` из `repo/secrets/` |

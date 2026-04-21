@@ -5,7 +5,7 @@ metadata:
 spec:
   gatewayClassName: yc
   listeners:
-    # HTTP listener обслуживает ACME HTTP-01 challenge от cert-manager.
+    # HTTP listener остаётся на случай редиректа 80→443; ACME нам не нужен (DNS-01).
     - name: http
       port: 80
       protocol: HTTP

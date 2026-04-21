@@ -1,0 +1,16 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: argocd
+  # Cert лежит там же, где Gateway слушает HTTPS (ns infra — см. gateway.yaml).
+  # Secret `argocd-tls` тоже создаётся здесь и подхватывается Gateway'ем через
+  # tls.certificateRefs.
+spec:
+  secretName: argocd-tls
+  dnsNames:
+    - argocd.erlong.ru
+  issuerRef:
+    kind: ClusterIssuer
+    # ClusterIssuer `yc-clusterissuer` приезжает из вендорного чарта
+    # repo/infra/cert-manager-webhook-yc/. DNS-01 через Yandex Cloud DNS API.
+    name: yc-clusterissuer

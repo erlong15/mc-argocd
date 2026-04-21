@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cert-manager-webhook-yc
+description: Vendored Yandex Cloud DNS-01 webhook for cert-manager — шаблоны взяты из oci://cr.yandex/yc-marketplace/yandex-cloud/cert-manager-webhook-yandex 1.0.9. Встроенный subchart cert-manager выкинут (базовый cert-manager ставится отдельным Application). Secret с SA-ключом создаёт terraform. ClusterIssuer — свой (templates/yc-clusterissuer.yaml).
+type: application
+version: 0.1.0
+appVersion: "1.0.3"

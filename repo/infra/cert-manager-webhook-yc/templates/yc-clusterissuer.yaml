@@ -1,0 +1,28 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: yc-clusterissuer
+  annotations:
+    # Нужно, чтобы ClusterIssuer аплаился после того, как webhook Deployment + APIService
+    # поднимутся (иначе cert-manager упадёт в ошибку "no kind registered for yandex-cloud-dns").
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  acme:
+    email: {{ .Values.clusterIssuer.email | quote }}
+    server: {{ .Values.clusterIssuer.server | quote }}
+    privateKeySecretRef:
+      # Secret с приватным ключом ACME-аккаунта (создаёт cert-manager сам).
+      name: letsencrypt-account-key
+    solvers:
+      - dns01:
+          webhook:
+            groupName: {{ .Values.groupName | quote }}
+            solverName: yandex-cloud-dns
+            config:
+              # folder_id прилетает из terraform через bootstrap valuesObject.
+              folder: {{ required "clusterIssuer.folder_id must be set (passed from terraform via bootstrap valuesObject)" .Values.clusterIssuer.folder_id | quote }}
+              # Secret cm-sa-creds в ns infra создаёт terraform (см. terraform/cert-manager.tf).
+              # Ключ внутри — key.json, формат тот же, что у `yc iam key create --output`.
+              serviceAccountSecretRef:
+                name: cm-sa-creds
+                key: key.json

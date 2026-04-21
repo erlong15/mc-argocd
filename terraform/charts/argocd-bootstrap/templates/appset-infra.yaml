@@ -31,6 +31,10 @@ spec:
           releaseName: '{{`{{ .path.basename }}`}}'
           valuesObject:
             lbIp: {{ .Values.lbIp | quote }}
+            # folder_id для cert-manager ClusterIssuer (DNS-01 webhook). Остальные
+            # чарты этот ключ игнорируют — Helm мягок к неизвестным верхнеуровневым значениям.
+            clusterIssuer:
+              folder_id: {{ .Values.folderId | quote }}
       destination:
         server: https://kubernetes.default.svc
         namespace: infra

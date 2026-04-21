@@ -1,0 +1,33 @@
+# APIService.groupName — должно совпадать с .spec.acme.solvers.dns01.webhook.groupName
+# в ClusterIssuer (templates/yc-clusterissuer.yaml).
+groupName: acme.cloud.yandex.com
+
+# Для ClusterRoleBinding ":domain-solver" — тот SA, от имени которого cert-manager
+# делает challenge. Базовый jetstack cert-manager создаёт SA с именем "cert-manager"
+# в ns infra.
+certManager:
+  serviceAccountName: cert-manager
+
+image:
+  repository: cr.yandex/yc-marketplace/yandex-cloud/cert-manager-webhook-yandex/cert-manager-webhook-yandex1749231714289200163949703675370054230465107054664
+  tag: 1.0.3
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+resources: {}
+nodeSelector: {}
+affinity: {}
+tolerations: []
+
+service:
+  type: ClusterIP
+  port: 443
+
+# ClusterIssuer (templates/yc-clusterissuer.yaml).
+# folder_id прокидывается из terraform через bootstrap valuesObject.
+clusterIssuer:
+  email: admin@erlong.ru
+  # Staging — для демо достаточно; на прод — https://acme-v02.api.letsencrypt.org/directory.
+  server: https://acme-staging-v02.api.letsencrypt.org/directory
+  # folder_id: перезаписывается из bootstrap-чарта (terraform знает его значение)
+  folder_id: ""

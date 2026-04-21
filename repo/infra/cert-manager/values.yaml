@@ -1,8 +1,8 @@
-letsencryptEmail: admin@erlong.ru
-
 cert-manager:
+  # CRDs ставит именно этот чарт — больше их в кластере никто не приносит.
   crds:
     enabled: true
+  # Нужно для Certificate с сылкой на Gateway API HTTPRoute/Gateway.
   extraArgs:
     - --enable-gateway-api
   # По умолчанию cert-manager держит leader election Role/RoleBinding в kube-system.

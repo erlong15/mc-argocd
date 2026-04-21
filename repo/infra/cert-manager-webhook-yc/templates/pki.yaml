@@ -1,0 +1,66 @@
+---
+# Self-signed Issuer — корень для CA-сертификата, которым подписываем serving-сертификат webhook'а.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "cert-manager-webhook-yc.selfSignedIssuer" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app: {{ include "cert-manager-webhook-yc.name" . }}
+    chart: {{ include "cert-manager-webhook-yc.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "cert-manager-webhook-yc.rootCACertificate" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app: {{ include "cert-manager-webhook-yc.name" . }}
+    chart: {{ include "cert-manager-webhook-yc.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  secretName: {{ include "cert-manager-webhook-yc.rootCACertificate" . }}
+  duration: 43800h # 5y
+  issuerRef:
+    name: {{ include "cert-manager-webhook-yc.selfSignedIssuer" . }}
+  commonName: "ca.cert-manager-webhook-yc.cert-manager"
+  isCA: true
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "cert-manager-webhook-yc.rootCAIssuer" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app: {{ include "cert-manager-webhook-yc.name" . }}
+    chart: {{ include "cert-manager-webhook-yc.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  ca:
+    secretName: {{ include "cert-manager-webhook-yc.rootCACertificate" . }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "cert-manager-webhook-yc.servingCertificate" . }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app: {{ include "cert-manager-webhook-yc.name" . }}
+    chart: {{ include "cert-manager-webhook-yc.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  secretName: {{ include "cert-manager-webhook-yc.servingCertificate" . }}
+  duration: 8760h # 1y
+  issuerRef:
+    name: {{ include "cert-manager-webhook-yc.rootCAIssuer" . }}
+  dnsNames:
+    - {{ include "cert-manager-webhook-yc.fullname" . }}
+    - {{ include "cert-manager-webhook-yc.fullname" . }}.{{ .Release.Namespace }}
+    - {{ include "cert-manager-webhook-yc.fullname" . }}.{{ .Release.Namespace }}.svc

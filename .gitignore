@@ -63,3 +63,12 @@ Thumbs.db
 .env
 
 CLAUDE.md
+
+# Helm dependency artefacts: OCI subchart тянется из YC registry при `helm dep update`.
+# Chart.lock коммитим (pinned digest), tgz-архивы — нет.
+repo/infra/*/charts/
+repo/infra/*/tmpcharts/
+
+# SOPS: коммитим только зашифрованный secrets.yaml. *.dec.yaml — это вывод `sops -d`, plaintext.
+repo/infra/*/*.dec.yaml
+

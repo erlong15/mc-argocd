@@ -1,6 +1,6 @@
 apiVersion: v2
 name: cert-manager
-description: cert-manager + LetsEncrypt ClusterIssuer (Gateway API HTTP-01)
+description: Base cert-manager (jetstack) installation — CRDs + controller + webhook + cainjector.
 type: application
 version: 0.1.0
 appVersion: "1.15.3"

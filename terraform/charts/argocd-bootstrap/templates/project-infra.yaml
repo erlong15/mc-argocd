@@ -43,10 +43,13 @@ spec:
       - group: ""
         kind: Secret
         name: envoy*
-      # cert-manager динамика: webhook CA, ACME account, выданные TLS-серты.
+      # cert-manager динамика: webhook CA + serving cert, ACME account, выданные TLS-серты.
       - group: ""
         kind: Secret
-        name: cert-manager-webhook-ca
+        name: cert-manager-webhook-yc-ca
+      - group: ""
+        kind: Secret
+        name: cert-manager-webhook-yc-webhook-tls
       - group: ""
         kind: Secret
         name: letsencrypt-account-key

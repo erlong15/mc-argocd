@@ -67,6 +67,9 @@ resource "helm_release" "argocd_bootstrap" {
       targetRevision = "main"
       infraPath      = "repo/infra"
       lbIp           = yandex_vpc_address.ingress.external_ipv4_address[0].address
+      # folder_id для ClusterIssuer.spec.acme.solvers.dns01.webhook.config.folder
+      # (repo/infra/cert-manager/templates/yc-clusterissuer.yaml).
+      folderId = var.folder_id
       # helm-провайдер сравнивает values и Chart.yaml version, но не содержимое templates/.
       # Хешируем файлы чарта, чтобы любая правка темплейта триггерила upgrade.
       _chartSha = sha1(join("", [
@@ -76,7 +79,10 @@ resource "helm_release" "argocd_bootstrap" {
     })
   ]
 
-  depends_on = [helm_release.argocd]
+  depends_on = [
+    helm_release.argocd,
+    kubernetes_secret.cm_sa_creds,
+  ]
 }
 
 resource "kubernetes_namespace" "demo_dev" {
