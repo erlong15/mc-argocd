@@ -312,7 +312,13 @@ kubectl delete application break-project -n argocd
 
 ## 11. SOPS pipeline (5 мин)
 
-DNS-01-ключ YC у нас НЕ через SOPS: terraform и так владеет SA, проще положить JSON сразу в `kubernetes_secret cm-sa-creds`, чем гонять plaintext через руки. SOPS показываем на прикладном секрете.
+DNS-01-ключ YC у нас НЕ через SOPS: terraform и так владеет SA, проще положить JSON сразу в `kubernetes_secret cm-sa-creds`, чем гонять plaintext через руки. SOPS показываем на прикладном секрете через чарт `repo/secrets/`.
+
+Что уже есть в репе:
+- `repo/secrets/` — helm chart, рендерит Secret'ы по списку в values
+- `repo/infra/projects/secretapp/application.yaml` — Application `secrets`, указывает `helm.valueFiles: [values.yaml, secrets://values-secret.enc.yaml]`
+- AppProject `infra.destinations` включает ns `secrets`
+- argocd-repo-server умеет helm-secrets (init-контейнер ставит sops + age + plugin; приватный ключ монтируется из Secret'а `helm-secrets-private-keys`)
 
 Сгенерировать age-ключ (если ещё не делали перед `terraform apply`):
 
@@ -324,9 +330,7 @@ PUBKEY=$(grep '# public key:' ~/.config/sops/age/keys.txt | awk '{print $4}')
 echo "public: $PUBKEY"
 ```
 
-Вставить `$PUBKEY` в `repo/secrets/.sops.yaml` (поле `age`).
-
-Если в `terraform.tfvars` был задан `age_key_file` — приватный ключ уже положен в Secret `helm-secrets-private-keys` в ns argocd и смонтирован в `argocd-repo-server` (см. `terraform/argocd-values.yaml`). Если нет — создать Secret руками:
+Если в `terraform.tfvars` был задан `age_key_file` — приватный ключ уже положен в Secret `helm-secrets-private-keys` в ns argocd. Если нет — создать вручную и перезапустить repo-server:
 
 ```bash
 kubectl -n argocd create secret generic helm-secrets-private-keys \
@@ -334,25 +338,39 @@ kubectl -n argocd create secret generic helm-secrets-private-keys \
 kubectl -n argocd rollout restart deploy argocd-repo-server
 ```
 
-Создать plaintext Secret из шаблона и зашифровать:
+Заполнить секреты и зашифровать:
 
 ```bash
 cd repo/secrets
-cp dev-secret.example.yaml dev-secret.yaml
-# отредактировать значения в dev-secret.yaml
-sops -e dev-secret.yaml > dev-secret.enc.yaml
-rm dev-secret.yaml   # обязательно: plaintext не коммитим
-sops -d dev-secret.enc.yaml   # проверка расшифровки
-git add .sops.yaml dev-secret.enc.yaml
-git commit -m "add encrypted dev secret"
+cp values-secret.example.yaml values-secret.yaml
+# отредактировать values-secret.yaml — заменить DB_PASSWORD, token и т.д.
+
+sops --encrypt \
+     --age "$PUBKEY" \
+     --encrypted-regex '^(secrets|data)$' \
+     values-secret.yaml > values-secret.enc.yaml
+rm values-secret.yaml            # plaintext не коммитим
+sops --decrypt values-secret.enc.yaml | head   # проверка
+
+git add values-secret.enc.yaml
+git commit -m "add encrypted secrets"
 git push
 cd ../..
 ```
 
+Дальше ArgoCD подхватывает сам (auto-sync на Application `secrets`):
+
+```bash
+argocd app get secrets
+# sync succeeded, Healthy
+kubectl -n demo-dev get secret demo-db -o yaml
+kubectl -n secrets get secret api-token -o jsonpath='{.data.token}' | base64 -d && echo
+```
+
 Проговорить:
-- в Git хранится только ciphertext
+- в Git хранится только ciphertext (`--encrypted-regex` шифрует только `secrets:` и `data:`, метаданные — открытым текстом, чтобы diff был читаемым)
 - приватный ключ живёт в `~/.config/sops/age/keys.txt` и **не уходит** в Git
-- `argocd-repo-server` расшифровывает через helm-secrets (подтягивается в init-контейнере, см. `terraform/argocd-values.yaml:56-82`)
+- `argocd-repo-server` расшифровывает через helm-secrets на момент Helm-рендера (`secrets://values-secret.enc.yaml`)
 - SOPS оправдан там, где секрет **рождается у человека** (DB-пароль, токен); когда секрет рождается у terraform — честнее k8s Secret напрямую
 - альтернативы: External Secrets Operator, Vault, KSOPS
 
@@ -392,7 +410,9 @@ cd ../..
 | cert-manager CrashLoopBackOff «Gateway API CRDs do not seem to be present» | стартовал раньше, чем envoy-gateway поставил Gateway API CRD | `kubectl -n infra rollout restart deploy cert-manager` (флаг `--enable-gateway-api` нужен для Certificate-референсов к Gateway, но требует CRD на старте) |
 | ApplicationSet не генерирует apps | неверный `gitops_repo_url` или недоступный форк | `kubectl describe applicationset infra -n argocd`, `kubectl logs -n argocd deploy/argocd-applicationset-controller` |
 | Application `ComparisonError: ... is not permitted in project` | AppProject блокирует kind/namespace | `kubectl get appproject <name> -n argocd -o yaml`, сверить whitelist |
-| `sops` не видит `.sops.yaml` | правила ищутся вверх по дереву | запускать `sops` из `repo/secrets/` |
+| `sops` ругается на отсутствие recipient | `.sops.yaml` у нас нет — ключ и regex передаём флагами | `sops --encrypt --age "$PUBKEY" --encrypted-regex '^(secrets\|data)$' values-secret.yaml > values-secret.enc.yaml` |
+| Application `secrets` в `Unknown/Missing`: `couldn't find file values-secret.enc.yaml` | ещё не закоммитили зашифрованный файл | выполнить шаг шифрования из §11 и запушить; Argo синкнется сам |
+| Application `secrets` в `SyncFailed`: `Error unmarshalling` или `age: no identity matched any recipient` | расшифровка упала — приватного ключа нет в `helm-secrets-private-keys` | проверить `kubectl -n argocd get secret helm-secrets-private-keys -o jsonpath='{.data.key\.txt}' \| base64 -d \| head`; если пусто — `terraform apply` с `age_key_file` или вручную `kubectl -n argocd create secret generic ...` + `rollout restart deploy argocd-repo-server` |
 | kubeconfig смотрит не туда | после нескольких apply | `kubectl config get-contexts`, переключиться на YC-контекст |
 
 ---

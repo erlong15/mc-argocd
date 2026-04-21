@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: secrets
+  namespace: argocd
+spec:
+  project: infra
+  source:
+    repoURL: https://github.com/erlong15/mc-argocd.git
+    targetRevision: main
+    path: repo/secrets
+    helm:
+      releaseName: secrets
+      valueFiles:
+        - values.yaml
+        # Префикс `secrets://` триггерит helm-secrets plugin в argocd-repo-server
+        # (см. terraform/argocd-values.yaml:56-82) — sops расшифровывает файл на лету.
+        - secrets://values-secret.enc.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: secrets
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Application пустой до первого values-secret.enc.yaml — дай ему создать ns.
+      - CreateNamespace=true
+      - ServerSideApply=true

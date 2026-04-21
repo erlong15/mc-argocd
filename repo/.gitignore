@@ -10,9 +10,8 @@
 .sops/keys.txt
 .sops/*.txt
 
-# незашифрованные секреты в secrets/ — только *.enc.yaml
-secrets/*.yaml
-secrets/*.yml
-!secrets/.sops.yaml
-!secrets/*.enc.yaml
-!secrets/*.enc.yml
+# secrets/ теперь Helm chart — Chart.yaml, values.yaml, templates/ коммитим.
+# Блокируем только plaintext values перед шифрованием: sops читает его из
+# values-secret.yaml и отдаёт values-secret.enc.yaml (последний коммитим).
+secrets/values-secret.yaml
+secrets/values-secret.yml

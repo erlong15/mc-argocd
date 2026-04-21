@@ -20,6 +20,10 @@ spec:
     # requestheader-ca). Без этого kube-apiserver не аутентифицирует вебхук.
     - server: https://kubernetes.default.svc
       namespace: kube-system
+    # Secret'ы из repo/secrets/ приземляются сюда по умолчанию
+    # (Application `secrets`, repo/infra/projects/secretapp/application.yaml).
+    - server: https://kubernetes.default.svc
+      namespace: secrets
   clusterResourceWhitelist:
     - group: '*'
       kind: '*'

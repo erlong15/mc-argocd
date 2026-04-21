@@ -61,7 +61,10 @@ module "kube" {
       node_cores  = var.node_cores
       node_memory = var.node_memory_gb
       preemptible = true
-      nat         = true
+      # Внешний IP на узле не нужен — egress идёт через yandex_vpc_gateway
+      # "egress_gateway" + route-table. nat=true тут упирается в квоту
+      # vpc.externalAddressesCreation.rate при первом же масштабировании.
+      nat = false
 
       node_locations = [
         {

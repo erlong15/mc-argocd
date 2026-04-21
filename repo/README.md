@@ -25,7 +25,9 @@ repo/
       prod/
         project.yaml       # AppProject demo-prod
         appset.yaml        # ApplicationSet apps-prod
-  secrets/                 # скелет под SOPS (см. secrets/README.md)
+  secrets/                 # Helm chart, рендерит k8s Secret'ы по values;
+                           # чувствительные значения — через helm-secrets/sops
+                           # (см. secrets/README.md)
 ```
 
 ## Слои (как ArgoCD видит репо)
@@ -42,16 +44,17 @@ repo/
 
 - `repo/infra/projects/dev/{project,appset}.yaml`
 - `repo/infra/projects/prod/{project,appset}.yaml`
+- `repo/infra/projects/secretapp/application.yaml`
 
 ```bash
 sed -i.bak 's|https://github.com/erlong15/mc-argocd.git|<YOUR_REMOTE>|g' \
-  infra/projects/dev/*.yaml infra/projects/prod/*.yaml
+  infra/projects/dev/*.yaml infra/projects/prod/*.yaml infra/projects/secretapp/*.yaml
 find infra/projects -name '*.bak' -delete
 ```
 
 `gitops_repo_url` в `terraform.tfvars` надо выставить туда же (его использует bootstrap-чарт).
 
-Для SOPS — заменить плейсхолдер публичного ключа в `secrets/.sops.yaml` на ваш age recipient.
+Для SOPS — `.sops.yaml` в репе нет; recipient и regex передаём флагами `sops --age "$PUBKEY" --encrypted-regex '^(secrets|data)$'` (см. `repo/secrets/README.md`).
 
 ## Pedagogical notes
 

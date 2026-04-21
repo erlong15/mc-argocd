@@ -315,9 +315,9 @@ repo/
 
 ## 22. Что покажем по SOPS
 
-- структуру `.sops.yaml` (public key → creation rules)
-- генерацию age-ключа
-- шифрование plaintext-секрета → commit ciphertext в Git
+- чарт `repo/secrets/` — рендерит k8s Secret'ы по списку из values
+- генерацию age-ключа + шифрование `values-secret.yaml` → `values-secret.enc.yaml` (`sops --encrypted-regex '^(secrets|data)$'` — метаданные остаются plaintext, diff читаем)
+- Application `secrets` с `helm.valueFiles: [values.yaml, secrets://values-secret.enc.yaml]`
 - расшифровку `argocd-repo-server` через helm-secrets при рендере chart'а
 
 Почему YC DNS-01-ключ НЕ через SOPS:

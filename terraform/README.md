@@ -68,7 +68,7 @@ terraform destroy
 ```bash
 mkdir -p ~/.config/sops/age
 age-keygen -o ~/.config/sops/age/keys.txt
-grep '# public key:' ~/.config/sops/age/keys.txt   # его вставить в repo/secrets/.sops.yaml
+grep '# public key:' ~/.config/sops/age/keys.txt   # этот recipient передаётся как `sops --age "$PUBKEY"`
 ```
 
 ### Два способа завести ключ в кластер
