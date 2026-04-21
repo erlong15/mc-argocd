@@ -22,3 +22,5 @@ spec:
           kind: Service
           name: argocd-server
           port: 80
+          # weight:1 — API server default; без него server-side apply рождает вечный diff.
+          weight: 1
