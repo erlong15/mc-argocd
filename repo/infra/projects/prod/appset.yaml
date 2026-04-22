@@ -4,14 +4,34 @@ metadata:
   name: apps-prod
   namespace: argocd
 spec:
+  # preserveResourcesOnDeletion: удаление самого ApplicationSet оставляет
+  # дочерние Application'ы и их ресурсы в кластере. Страховка для
+  # drift/rollback демо: случайный `kubectl delete appset` не снесёт прод.
   syncPolicy:
     preserveResourcesOnDeletion: true
+
+  # Generator = источник списка будущих Application'ов. Здесь — directories:
+  # один Application на каждую поддиректорию repo/apps/prod/*. Так же
+  # устроен ApplicationSet `infra` (см. terraform/charts/argocd-bootstrap/
+  # templates/appset-infra.yaml) — единый стиль.
+  #
+  # Контракт директории приложения (apps/prod/<name>/):
+  #   - Chart.yaml — umbrella-чарт со ссылкой на upstream чарт в dependencies;
+  #   - values.yaml — значения (вложены под alias подчарта);
+  #   - templates/  — наши собственные ресурсы (у нас — HTTPRoute);
+  # Добавить новое приложение = скопировать директорию, поменять
+  # dependencies в Chart.yaml и backendRefs в HTTPRoute. ApplicationSet
+  # подхватит автоматически, сам appset.yaml не трогаем.
   generators:
     - git:
         repoURL: https://github.com/erlong15/mc-argocd.git
         revision: main
-        files:
-          - path: repo/apps/prod/*/config.json
+        directories:
+          - path: repo/apps/prod/*
+
+  # Template — скелет дочернего Application. Подстановки:
+  #   {{path.basename}} — имя директории (nginx, podinfo, ...)
+  #   {{path.path}}     — путь от корня репа до директории (repo/apps/prod/nginx)
   template:
     metadata:
       name: '{{path.basename}}-prod'
@@ -20,35 +40,24 @@ spec:
       source:
         repoURL: https://github.com/erlong15/mc-argocd.git
         targetRevision: main
-        path: repo/charts/nginx-demo
+        path: '{{path.path}}'
+        # Umbrella-чарт рендерится helm'ом. releaseName фиксируем, иначе
+        # dependencies-чарт получит случайное имя и все наши override'ы
+        # (fullnameOverride, image и т.д.) поедут мимо.
         helm:
           releaseName: '{{path.basename}}-prod'
-          values: |
-            fullnameOverride: {{path.basename}}-prod
-            replicaCount: {{replicaCount}}
-            resources:
-              requests:
-                cpu: {{cpuRequest}}
-                memory: {{memoryRequest}}
-              limits:
-                cpu: {{cpuLimit}}
-                memory: {{memoryLimit}}
-            ingress:
-              enabled: false
-            config:
-              indexHtml: |
-                <html>
-                  <body>
-                    <h1>{{path.basename}} / prod</h1>
-                    <p>{{message}}</p>
-                  </body>
-                </html>
       destination:
         server: https://kubernetes.default.svc
         namespace: demo-prod
+
+      # syncPolicy.automated закомментирован осознанно: первый проход демо —
+      # ручной `argocd app sync` (demo-plan.md §5). Автосинк включаем
+      # коммитом (раскомментировать блок ниже) — это сам показ GitOps:
+      # переключение на auto-sync тоже едет через Git, не через UI.
       # syncPolicy:
       #   automated:
-      #     prune: true
-      #     selfHeal: true
+      #     prune: true       # удалять ресурсы, пропавшие из Git
+      #     selfHeal: true    # откатывать ручные правки в кластере
       #   syncOptions:
       #     - CreateNamespace=true
+      #     - ServerSideApply=true

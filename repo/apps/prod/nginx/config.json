@@ -1,8 +1,0 @@
-{
-  "replicaCount": 2,
-  "cpuRequest": "100m",
-  "memoryRequest": "128Mi",
-  "cpuLimit": "200m",
-  "memoryLimit": "256Mi",
-  "message": "Rendered by ArgoCD ApplicationSet (prod)"
-}

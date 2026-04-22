@@ -1,0 +1,57 @@
+# Values для prod-инстанса upstream nginx.
+# Всё, что вложено под ключ `nginx:` — прокидывается в subchart nginx
+# (Bitnami). Верхнеуровневые значения игнорируются подчартом и могут
+# использоваться нашими собственными шаблонами в templates/ (в нашем
+# случае там только HTTPRoute, параметров не принимает).
+
+nginx:
+  # Bitnami-чарт блокирует не-bitnami образы через NOTES-проверку.
+  # Для демо разрешаем официальный nginx явно — это чисто рендер-флаг,
+  # на runtime ничего не меняет.
+  global:
+    security:
+      allowInsecureImages: true
+
+  # fullnameOverride делает имя ресурсов предсказуемым (Service=nginx).
+  # Без override Bitnami клеит <release>-<chart> → nginx-prod-nginx,
+  # HTTPRoute пришлось бы вручную синхронизировать с этим именем.
+  fullnameOverride: nginx
+
+  replicaCount: 1
+
+  # Подменяем bitnami-образ (registry-1.docker.io/bitnami/nginx:latest)
+  # на официальный nginx:alpine. Bitnami-образ часто требует авторизации
+  # в Docker Hub, а alpine-вариант официального nginx легковесен (~50MB)
+  # и полностью публичный. Чарт всё равно оборачивает его в свой template,
+  # нам интересна только фактура «upstream-чарт работает через наш
+  # HTTPRoute», а не фичи bitnami-сборки.
+  image:
+    registry: docker.io
+    repository: library/nginx
+    tag: alpine
+    pullPolicy: IfNotPresent
+
+  # HPA и metrics выключаем — они плодят лишние kind'ы (HPA, ServiceMonitor),
+  # которые пришлось бы добавлять в namespaceResourceWhitelist проекта.
+  autoscaling:
+    enabled: false
+  metrics:
+    enabled: false
+
+  # Ingress не нужен — наружу ходим через HTTPRoute (см. templates/httproute.yaml),
+  # он слушает Envoy Gateway `public` в ns infra.
+  ingress:
+    enabled: false
+
+  service:
+    type: ClusterIP
+    ports:
+      http: 80
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi

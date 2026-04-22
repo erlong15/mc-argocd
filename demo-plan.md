@@ -148,7 +148,7 @@ kubectl -n argocd get appprojects
 kubectl -n argocd get applicationsets
 # infra, infra-projects, apps-dev, apps-prod
 kubectl -n argocd get applications
-# envoy-gateway, cert-manager, cert-manager-webhook-yc, projects-dev, projects-prod, nginx-dev, nginx-prod
+# envoy-gateway, cert-manager, cert-manager-webhook-yc, projects-dev, projects-prod, nginx-dev, nginx-prod, podinfo-prod
 ```
 
 Нарисовать на доске три уровня:
@@ -157,7 +157,9 @@ kubectl -n argocd get applications
 2. **bootstrap-чарт** — создаёт AppProject `infra` + два ApplicationSet:
    - `infra` → `repo/infra/*` (envoy-gateway, cert-manager, cert-manager-webhook-yc) как Helm-чарты.
    - `infra-projects` → `repo/infra/projects/*` как raw-YAML; каждый Application `projects-{env}` укладывает внутрь ns `argocd` ещё один AppProject (`demo-dev`/`demo-prod`) и ещё один ApplicationSet (`apps-dev`/`apps-prod`).
-3. **apps-dev / apps-prod** — по одному Application на каждый каталог `repo/apps/{env}/<app>/` с `config.json`.
+3. **apps-dev / apps-prod** — dev и prod ведут себя по-разному намеренно (показываем два паттерна):
+   - `apps-dev` — git **files**-generator, читает `repo/apps/dev/*/config.json`, поля (`replicaCount`, `cpuRequest`, …) подставляются в helm values шаблона ApplicationSet'а. Все dev-приложения рендерятся из общего `repo/charts/nginx-demo`.
+   - `apps-prod` — git **directories**-generator: `repo/apps/prod/<name>/` = самодостаточный umbrella-чарт (`Chart.yaml` с upstream dependency, `values.yaml`, `templates/httproute.yaml`). Добавить новый prod-сервис — скопировать директорию, поменять зависимость в `Chart.yaml`. Тот же паттерн, что `repo/infra/envoy-gateway/`.
 
 Ключевые границы:
 - `sourceRepos` у всех project'ов ограничен нашим форком.
@@ -174,9 +176,10 @@ Namespaces `demo-dev`/`demo-prod` уже созданы terraform'ом.
 argocd app list
 argocd app get nginx-dev
 argocd app get nginx-prod
+argocd app get podinfo-prod
 ```
 
-**Что должен увидеть зритель:** `nginx-dev` и `nginx-prod` в статусе `OutOfSync` / `Missing` — ApplicationSet'ы `apps-{dev,prod}` умышленно без `automated` (закомментирован блок в `repo/infra/projects/{env}/appset.yaml`). В UI — дерево из трёх уровней project → appset → app.
+**Что должен увидеть зритель:** `nginx-dev`, `nginx-prod`, `podinfo-prod` в статусе `OutOfSync` / `Missing` — ApplicationSet'ы `apps-{dev,prod}` умышленно без `automated` (закомментирован блок в `repo/infra/projects/{env}/appset.yaml`). В UI — дерево из трёх уровней project → appset → app.
 
 ---
 
@@ -185,17 +188,23 @@ argocd app get nginx-prod
 ```bash
 argocd app sync nginx-dev
 argocd app sync nginx-prod
+argocd app sync podinfo-prod
 argocd app get nginx-dev
-kubectl get deploy,svc,cm -n demo-dev
-kubectl get deploy,svc,cm -n demo-prod
+kubectl get deploy,svc -n demo-dev
+kubectl get deploy,svc,httproute -n demo-prod
 ```
 
 Показать в UI дерево ресурсов (главный визуальный аргумент ArgoCD).
 
-Пояснить различия prod vs dev:
-- разные `replicaCount` (1 vs 2)
-- разные resources
-- один chart, два env — вся разница в `repo/apps/<env>/nginx/config.json`
+Пояснить два разных паттерна values в одном репо:
+- **dev** — общий чарт `repo/charts/nginx-demo` + per-app `config.json` (files-generator прокидывает поля в helm values шаблона ApplicationSet'а). Подход компактный, когда все приложения одного типа.
+- **prod** — umbrella-чарт в каждой директории `repo/apps/prod/<app>/`: `Chart.yaml` тянет upstream-чарт как dependency (bitnami/nginx, podinfo), `values.yaml` переопределяет под себя, собственный `templates/httproute.yaml` даёт публикацию через Envoy Gateway. Подход гибкий, когда приложения разные.
+
+Проверка, что HTTPRoute реально зашёл:
+```bash
+curl -s -H 'Host: nginx-prod.erlong.ru'   http://$(terraform -chdir=../terraform output -raw ingress_ip)/ | head -5
+curl -s -H 'Host: podinfo-prod.erlong.ru' http://$(terraform -chdir=../terraform output -raw ingress_ip)/ | head -5
+```
 
 ---
 
@@ -405,6 +414,9 @@ kubectl -n secrets get secret api-token -o jsonpath='{.data.token}' | base64 -d 
 | `helm_release.argocd` падает на `no matches for kind "HTTPRoute"` | bootstrap: Gateway API CRDs ещё не установлены | в `terraform/argocd-values.yaml` `server.httproute.enabled: false`; HTTPRoute живёт в `repo/infra/envoy-gateway/templates/argocd-httproute.yaml` и приезжает в одном Argo-синке с CRDs |
 | `envoy-gateway` app висит `OutOfSync` на HTTPRoute | server-side apply проставляет `backendRefs[].weight: 1` по умолчанию, в манифесте не было | `weight: 1` уже задан явно; если видишь diff — проверить, что в `argocd-httproute.yaml` он есть |
 | `apps-dev/apps-prod` ApplicationSet: `error getting project demo-dev: AppProject ... not found` | race: ApplicationSet controller стартовал реконцайл раньше, чем AppProject попал в его кэш | в `project.yaml` выставлен `argocd.argoproj.io/sync-wave: "-1"` — AppProject применится раньше ApplicationSet'а; если ошибка залипла от старого состояния: `kubectl -n argocd rollout restart deploy argocd-applicationset-controller` |
+| `nginx-prod` sync: `ERROR: Original containers have been substituted for unrecognized ones` | bitnami-чарт блокирует не-bitnami образ в NOTES.txt | в `repo/apps/prod/nginx/values.yaml` выставлен `nginx.global.security.allowInsecureImages: true` (мы осознанно ставим официальный `nginx:alpine` поверх чарта); если ошибка — проверить, что флаг не выпал из values |
+| `nginx-prod` / `podinfo-prod` sync: `HTTPRoute ... is not permitted in project` | в AppProject `demo-prod` не перечислен kind HTTPRoute | проверить `namespaceResourceWhitelist` в `repo/infra/projects/prod/project.yaml` — должен содержать `gateway.networking.k8s.io/HTTPRoute`, плюс `ServiceAccount`, `HPA`, `PDB`, `NetworkPolicy` (bitnami рендерит) |
+| `curl -H 'Host: nginx-prod.erlong.ru' http://<ip>/` → 404/no route | HTTPRoute не прицепился к Gateway | `kubectl -n demo-prod get httproute -o yaml` — смотреть `status.parents`: должен быть `Accepted=True` на Gateway `infra/public`; если `Reason: NotAllowedByListeners` — проверить `allowedRoutes.namespaces.from: All` на listener'е http |
 | `terraform apply` не видит правок в bootstrap-чарте | helm-provider сравнивает `values` и `Chart.yaml version`, не содержимое templates/ | в values прокинут `_chartSha` (sha1 по файлам чарта) — любая правка триггерит upgrade; если очень надо — bump в `Chart.yaml` |
 | Application показывает `Application has N orphaned resources` | в ns `infra` висят ресурсы, созданные оператором (envoy-infra-public-*), cert-manager'ом и кластером — не из Git | в AppProject `infra.orphanedResources.ignore` перечислены известные паттерны (envoy-*, cert-manager-webhook-yc-ca, letsencrypt-account-key, argocd-tls, kube-root-ca.crt, default SA) |
 | cert-manager CrashLoopBackOff «Gateway API CRDs do not seem to be present» | стартовал раньше, чем envoy-gateway поставил Gateway API CRD | `kubectl -n infra rollout restart deploy cert-manager` (флаг `--enable-gateway-api` нужен для Certificate-референсов к Gateway, но требует CRD на старте) |

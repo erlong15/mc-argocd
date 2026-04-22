@@ -1,0 +1,29 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: podinfo
+spec:
+  # Цепляемся к общему публичному Gateway в ns infra, как и nginx.
+  # http listener у Gateway без TLS — демо-уровень.
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: public
+      namespace: infra
+      sectionName: http
+  # Демо-хостнейм; curl -H 'Host: podinfo-prod.erlong.ru' http://<ingress_ip>/
+  hostnames:
+    - podinfo-prod.erlong.ru
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        # Service `podinfo` рождает subchart (fullnameOverride в values.yaml),
+        # слушает на 9898 в том же ns demo-prod.
+        - group: ""
+          kind: Service
+          name: podinfo
+          port: 9898
+          weight: 1

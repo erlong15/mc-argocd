@@ -1,0 +1,14 @@
+apiVersion: v2
+name: podinfo
+description: Prod instance of podinfo (umbrella-чарт для masterclass).
+type: application
+version: 0.1.0
+# Идентично pattern'у apps/prod/nginx/: upstream chart как dependency +
+# собственный HTTPRoute в templates/. Добавление третьего приложения
+# копируется отсюда один-к-одному.
+dependencies:
+  - name: podinfo
+    # https://artifacthub.io/packages/helm/podinfo/podinfo
+    # OCI-дистрибуция подинфо живёт в ghcr.io/stefanprodan/charts.
+    version: 6.11.2
+    repository: oci://ghcr.io/stefanprodan/charts

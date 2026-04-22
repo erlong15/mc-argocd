@@ -1,0 +1,36 @@
+# Values для prod-инстанса podinfo. Всё под ключом `podinfo:` уходит в
+# subchart; верхнеуровневые ключи доступны собственным шаблонам (у нас
+# только HTTPRoute, параметров не читает).
+
+podinfo:
+  # Предсказуемое имя ресурсов (Service=podinfo вместо <release>-podinfo).
+  fullnameOverride: podinfo
+
+  replicaCount: 1
+
+  # Отключаем опциональные фичи, которые потянули бы лишние kind'ы:
+  # HPA, ServiceMonitor, redis-sidecar и т.д. — в AppProject они не
+  # разрешены, да и демо от них не зависит.
+  hpa:
+    enabled: false
+  serviceMonitor:
+    enabled: false
+  redis:
+    enabled: false
+
+  # Ingress off — наружу ходим через HTTPRoute (см. templates/httproute.yaml).
+  ingress:
+    enabled: false
+
+  service:
+    type: ClusterIP
+    # podinfo слушает на 9898 по умолчанию — оставим как есть, но
+    # переименовывать не нужно: HTTPRoute целится по номеру порта.
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi

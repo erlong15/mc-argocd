@@ -4,15 +4,38 @@ metadata:
   name: demo-prod
   namespace: argocd
   annotations:
+    # sync-wave: -1 — AppProject применяется раньше своего ApplicationSet
+    # (wave 0 по умолчанию). Без этого ApplicationSet controller успевает
+    # начать реконсайл до того, как AppProject попадёт в его кэш, и валится
+    # с «AppProject demo-prod not found». См. demo-plan.md §13.
     argocd.argoproj.io/sync-wave: "-1"
 spec:
   description: Demo applications - prod environment
+
+  # sourceRepos — белый список репозиториев, откуда Application'ам этого
+  # проекта разрешено пуллить манифесты. Граница supply-chain: чужой
+  # repoURL в Application не пройдёт валидацию.
   sourceRepos:
     - https://github.com/erlong15/mc-argocd.git
+
+  # destinations — куда разрешено деплоить. Главная multi-tenancy граница:
+  # Application в demo-prod физически не сможет положить ресурсы в demo-dev,
+  # infra, kube-system и т.д., даже если кто-то подменит yaml в namespace
+  # argocd. См. demo-plan.md §10 — там эта граница ломается специально.
   destinations:
     - server: https://kubernetes.default.svc
       namespace: demo-prod
+
+  # clusterResourceWhitelist — какие cluster-scoped ресурсы (ClusterRole,
+  # CRD, Namespace) можно создавать. Пустой список = нельзя ничего.
+  # Прикладному проекту они не нужны, сужаем поверхность атаки.
   clusterResourceWhitelist: []
+
+  # namespaceResourceWhitelist — какие namespaced-ресурсы разрешены
+  # внутри destinations. Список намеренно узкий, но расширен по сравнению
+  # с dev: prod-приложения используют upstream чарты (bitnami/nginx,
+  # podinfo), которые создают ServiceAccount, HPA-заготовки и т.п.
+  # Отдельно добавлен HTTPRoute — наш собственный кусок umbrella-чарта.
   namespaceResourceWhitelist:
     - group: ""
       kind: ConfigMap
@@ -20,9 +43,33 @@ spec:
       kind: Service
     - group: ""
       kind: Secret
+    # ServiceAccount — подавляющее большинство upstream чартов его рендерит
+    # (Bitnami всегда, podinfo опционально). Без этого kind чарт падает
+    # на валидации проекта ещё до применения.
+    - group: ""
+      kind: ServiceAccount
     - group: apps
       kind: Deployment
+    # HPA — даже если мы выключаем autoscaling.enabled, некоторые чарты
+    # всё равно рендерят HPA с minReplicas=1. Разрешаем на всякий случай.
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    # PDB — bitnami-чарты часто завозят PodDisruptionBudget.
+    - group: policy
+      kind: PodDisruptionBudget
     - group: networking.k8s.io
       kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    # HTTPRoute — наш способ выставить сервис наружу через Envoy Gateway
+    # вместо классического Ingress. Лежит в templates/ каждого
+    # apps/prod/<app>/ чарта.
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+
+  # orphanedResources.warn — в UI Application получает предупреждение,
+  # если в его ns появились ресурсы, которыми никто из проекта не владеет
+  # (например, kube-root-ca.crt от control-plane). Не блокирует sync —
+  # просто видимость.
   orphanedResources:
     warn: true
