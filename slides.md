@@ -284,7 +284,7 @@ repo/
 
 ### prod — umbrella-чарт per приложение
 - `repo/apps/prod/<app>/` — самодостаточный Helm-чарт: `Chart.yaml` с upstream в dependencies, `values.yaml` под alias субчарта, `templates/httproute.yaml` с маршрутом на Envoy Gateway
-- `nginx-prod` → bitnami/nginx 23.0.0 (образ подменён на `nginx:alpine`)
+- `nginx-prod` → bitnami/nginx 23.0.0 (образ `bitnamilegacy/nginx:1.28.0` — публичный fork после миграции бесплатной ветки в `bitnamilegacy/` в августе 2025)
 - `podinfo-prod` → stefanprodan/podinfo 6.11.2
 - **когда выбирать:** приложения разные, у каждого свой upstream чарт; нужна полная изоляция per-app values
 

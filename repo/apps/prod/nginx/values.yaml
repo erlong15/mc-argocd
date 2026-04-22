@@ -5,13 +5,6 @@
 # случае там только HTTPRoute, параметров не принимает).
 
 nginx:
-  # Bitnami-чарт блокирует не-bitnami образы через NOTES-проверку.
-  # Для демо разрешаем официальный nginx явно — это чисто рендер-флаг,
-  # на runtime ничего не меняет.
-  global:
-    security:
-      allowInsecureImages: true
-
   # fullnameOverride делает имя ресурсов предсказуемым (Service=nginx).
   # Без override Bitnami клеит <release>-<chart> → nginx-prod-nginx,
   # HTTPRoute пришлось бы вручную синхронизировать с этим именем.
@@ -19,16 +12,19 @@ nginx:
 
   replicaCount: 1
 
-  # Подменяем bitnami-образ (registry-1.docker.io/bitnami/nginx:latest)
-  # на официальный nginx:alpine. Bitnami-образ часто требует авторизации
-  # в Docker Hub, а alpine-вариант официального nginx легковесен (~50MB)
-  # и полностью публичный. Чарт всё равно оборачивает его в свой template,
-  # нам интересна только фактура «upstream-чарт работает через наш
-  # HTTPRoute», а не фичи bitnami-сборки.
+  # Образ: bitnamilegacy/nginx вместо дефолтного bitnami/nginx:latest.
+  # Bitnami с августа 2025 перенесла бесплатную ветку образов в
+  # `bitnamilegacy/` (см. https://github.com/bitnami/containers), их
+  # можно тянуть без авторизации. Layout совпадает с чартом (bash в
+  # образе, entrypoint в /opt/bitnami/scripts/nginx/), поэтому init
+  # container `preserve-logs-symlinks` и основной процесс стартуют
+  # корректно. ПРИМЕЧАНИЕ: пробовали nginx:alpine от upstream — чарт
+  # требует bash и bitnami-layout; официальный образ этого не даёт,
+  # pod падает в `exec: /bin/bash: no such file`. См. demo-plan.md §13.
   image:
     registry: docker.io
-    repository: library/nginx
-    tag: alpine
+    repository: bitnamilegacy/nginx
+    tag: 1.28.0
     pullPolicy: IfNotPresent
 
   # HPA и metrics выключаем — они плодят лишние kind'ы (HPA, ServiceMonitor),
