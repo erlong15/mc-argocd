@@ -114,14 +114,15 @@ Generator определяет СПИСОК, из которого ApplicationSe
 
 Template — скелет Application'а. Generator подставляет переменные в поля шаблона.
 
-Что доступно в подстановке:
-- `{{path.basename}}`, `{{path.path}}`, `{{path.segments[N]}}` — от git generator
+Что доступно в подстановке (из git generator):
+- **fasttemplate** (default): `{{path}}`, `{{path.basename}}`, `{{path[N]}}`
+- **goTemplate**: `{{ .path.path }}`, `{{ .path.basename }}`, `{{ .path.segments }}`
 - любое поле файла, матчнутого files generator (`{{replicaCount}}`, `{{message}}`)
 - произвольные ключи из `list`-generator
 
 Два синтаксиса:
-- **fasttemplate** (default) — простые `{{key}}`, строковая подстановка
-- **goTemplate: true** + `goTemplateOptions: ["missingkey=error"]` — полноценный `{{ .path.basename }}` с условиями, циклами и strict-валидацией опечаток
+- **fasttemplate** (default) — простые `{{key}}`, строковая подстановка. Набор переменных ограничен и называются иначе: `{{path}}`, а не `{{path.path}}`.
+- **goTemplate: true** + `goTemplateOptions: ["missingkey=error"]` — полноценный `{{ .path.basename }}` с условиями, циклами и strict-валидацией опечаток. Рекомендуется для всего нетривиального — опечатка в ключе сразу даёт ошибку, а не молчаливую подстановку литерала.
 
 В этом демо:
 - `apps-dev` / `apps-prod` — fasttemplate (простые шаблоны)

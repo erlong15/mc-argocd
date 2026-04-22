@@ -29,9 +29,14 @@ spec:
         directories:
           - path: repo/apps/prod/*
 
-  # Template — скелет дочернего Application. Подстановки:
+  # Template — скелет дочернего Application. Подстановки (fasttemplate,
+  # NOT goTemplate: в goTemplate'е те же переменные называются по-другому
+  # — `{{ .path.path }}` и т.п. — и включаются через `goTemplate: true`
+  # на уровне spec. Без этого флага доступен fasttemplate-синтаксис ниже):
+  #   {{path}}          — полный путь от корня репа до директории
+  #                       (например, repo/apps/prod/nginx)
   #   {{path.basename}} — имя директории (nginx, podinfo, ...)
-  #   {{path.path}}     — путь от корня репа до директории (repo/apps/prod/nginx)
+  #   {{path[N]}}       — N-й сегмент пути (0-indexed)
   template:
     metadata:
       name: '{{path.basename}}-prod'
@@ -40,7 +45,7 @@ spec:
       source:
         repoURL: https://github.com/erlong15/mc-argocd.git
         targetRevision: main
-        path: '{{path.path}}'
+        path: '{{path}}'
         # Umbrella-чарт рендерится helm'ом. releaseName фиксируем, иначе
         # dependencies-чарт получит случайное имя и все наши override'ы
         # (fullnameOverride, image и т.д.) поедут мимо.
