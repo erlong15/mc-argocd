@@ -5,6 +5,7 @@
 podinfo:
   # Предсказуемое имя ресурсов (Service=podinfo вместо <release>-podinfo).
   fullnameOverride: podinfo
+  
 
   replicaCount: 1
 
