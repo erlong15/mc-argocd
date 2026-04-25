@@ -5,6 +5,14 @@ configs:
   params:
     # Envoy Gateway terminates TLS and forwards plain HTTP to argocd-server.
     server.insecure: true
+  cm:
+    # По умолчанию argocd-repo-server разрешает только http/https в helm.valueFiles.
+    # Добавляем secrets+ варианты, иначе `secrets://values-secret.enc.yaml`
+    # отбивается с "the URL scheme 'secrets' is not allowed".
+    helm.valuesFileSchemes: >-
+      secrets, secrets+gpg-import, secrets+gpg-import-kubernetes,
+      secrets+age-import, secrets+age-import-kubernetes,
+      https, http
 
 server:
   service:
