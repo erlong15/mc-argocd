@@ -1,0 +1,53 @@
+# Values для prod-инстанса upstream nginx.
+# Всё, что вложено под ключ `nginx:` — прокидывается в subchart nginx
+# (Bitnami). Верхнеуровневые значения игнорируются подчартом и могут
+# использоваться нашими собственными шаблонами в templates/ (в нашем
+# случае там только HTTPRoute, параметров не принимает).
+
+nginx:
+  # fullnameOverride делает имя ресурсов предсказуемым (Service=nginx).
+  # Без override Bitnami клеит <release>-<chart> → nginx-prod-nginx,
+  # HTTPRoute пришлось бы вручную синхронизировать с этим именем.
+  fullnameOverride: nginx-infra
+
+  replicaCount: 1
+
+  # Образ: bitnamilegacy/nginx вместо дефолтного bitnami/nginx:latest.
+  # Bitnami с августа 2025 перенесла бесплатную ветку образов в
+  # `bitnamilegacy/` (см. https://github.com/bitnami/containers), их
+  # можно тянуть без авторизации. Layout совпадает с чартом (bash в
+  # образе, entrypoint в /opt/bitnami/scripts/nginx/), поэтому init
+  # container `preserve-logs-symlinks` и основной процесс стартуют
+  # корректно. ПРИМЕЧАНИЕ: пробовали nginx:alpine от upstream — чарт
+  # требует bash и bitnami-layout; официальный образ этого не даёт,
+  # pod падает в `exec: /bin/bash: no such file`. См. demo-plan.md §13.
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/nginx
+    tag: 1.28.0
+    pullPolicy: IfNotPresent
+
+  # HPA и metrics выключаем — они плодят лишние kind'ы (HPA, ServiceMonitor),
+  # которые пришлось бы добавлять в namespaceResourceWhitelist проекта.
+  autoscaling:
+    enabled: false
+  metrics:
+    enabled: false
+
+  # Ingress не нужен — наружу ходим через HTTPRoute (см. templates/httproute.yaml),
+  # он слушает Envoy Gateway `public` в ns infra.
+  ingress:
+    enabled: false
+
+  service:
+    type: ClusterIP
+    ports:
+      http: 80
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi

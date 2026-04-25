@@ -1,0 +1,36 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: nginx
+spec:
+  # Прицепляемся к общему Envoy Gateway `public` в ns infra. Gateway
+  # принимает маршруты из любых namespace'ов (allowedRoutes.namespaces.from: All),
+  # поэтому ReferenceGrant не нужен. Секция `http` — 80/HTTP без TLS,
+  # под демо. Если захотим HTTPS per-app — надо выпустить cert-manager'ом
+  # отдельный Secret и подцепить к listener'у https с SNI.
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: public
+      namespace: infra
+      sectionName: http
+  # Демо-хостнейм, DNS на него не обязателен: достаточно
+  #   curl -H 'Host: nginx-prod.erlong.ru' http://<ingress_ip>/
+  # Если хочется «настоящего» DNS — добавить A-запись в ту же зону,
+  # что используется под argocd.erlong.ru (см. terraform/dns.tf).
+  hostnames:
+    - nginx-infra.erlong.ru
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        # Service `nginx` создаётся subchart'ом (fullnameOverride в values.yaml).
+        # Живёт в том же ns demo-prod, cross-ns ссылок нет → ReferenceGrant не нужен.
+        - group: ""
+          kind: Service
+          name: nginx
+          port: 80
+          # weight:1 явно — server-side apply иначе проставит дефолт и будет вечный diff.
+          weight: 1
