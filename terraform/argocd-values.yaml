@@ -86,7 +86,10 @@ repoServer:
           # без --strip-components=1 plugin.yaml оказывается на уровень глубже,
           # чем ждёт Helm, и downloader для secrets:// не регистрируется
           # (симптом: "open secrets://...: no such file or directory").
-          curl -sSL https://github.com/jkroepke/helm-secrets/releases/download/v4.6.2/helm-secrets.tar.gz \
+          # v4.7.6 убрал двойное `command`+`platformCommand` в plugin.yaml —
+          # на Helm 3.18+ старые версии (<=4.6.x) пишут WARNING в stdout,
+          # и ArgoCD ломается на unmarshal этого сообщения как манифеста.
+          curl -sSL https://github.com/jkroepke/helm-secrets/releases/download/v4.7.6/helm-secrets.tar.gz \
             | tar -xz --strip-components=1 -C /custom-tools/helm-plugins/helm-secrets
       volumeMounts:
         - name: custom-tools
