@@ -15,7 +15,7 @@ spec:
         - values.yaml
         # Префикс `secrets://` триггерит helm-secrets plugin в argocd-repo-server
         # (см. terraform/argocd-values.yaml:56-82) — sops расшифровывает файл на лету.
-        - secrets://values-secret.enc.yaml
+        - values-secret.enc.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: secrets
