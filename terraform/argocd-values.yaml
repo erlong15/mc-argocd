@@ -82,8 +82,12 @@ repoServer:
 
           # helm-secrets plugin
           mkdir -p /custom-tools/helm-plugins/helm-secrets
+          # Тарбол релиза содержит верхний каталог helm-secrets/, поэтому
+          # без --strip-components=1 plugin.yaml оказывается на уровень глубже,
+          # чем ждёт Helm, и downloader для secrets:// не регистрируется
+          # (симптом: "open secrets://...: no such file or directory").
           curl -sSL https://github.com/jkroepke/helm-secrets/releases/download/v4.6.2/helm-secrets.tar.gz \
-            | tar -xz -C /custom-tools/helm-plugins/helm-secrets
+            | tar -xz --strip-components=1 -C /custom-tools/helm-plugins/helm-secrets
       volumeMounts:
         - name: custom-tools
           mountPath: /custom-tools
