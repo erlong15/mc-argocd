@@ -30,7 +30,7 @@ spec:
         # Живёт в том же ns demo-prod, cross-ns ссылок нет → ReferenceGrant не нужен.
         - group: ""
           kind: Service
-          name: nginx
+          name: nginx-infra
           port: 80
           # weight:1 явно — server-side apply иначе проставит дефолт и будет вечный diff.
           weight: 1
