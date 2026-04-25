@@ -59,10 +59,10 @@ spec:
       # ручной `argocd app sync` (demo-plan.md §5). Автосинк включаем
       # коммитом (раскомментировать блок ниже) — это сам показ GitOps:
       # переключение на auto-sync тоже едет через Git, не через UI.
-      # syncPolicy:
-      #   automated:
-      #     prune: true       # удалять ресурсы, пропавшие из Git
-      #     selfHeal: true    # откатывать ручные правки в кластере
-      #   syncOptions:
-      #     - CreateNamespace=true
-      #     - ServerSideApply=true
+      syncPolicy:
+        automated:
+          prune: true       # удалять ресурсы, пропавшие из Git
+          selfHeal: true    # откатывать ручные правки в кластере
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
